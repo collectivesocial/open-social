@@ -29,3 +29,15 @@ npm install
 cp .env.example .env
 # Edit .env with your values
 npm run dev
+
+## API Endpoint
+
+The OpenSocial API is available at:
+```
+https://api.opensocial.community:8443
+```
+
+## Health Check
+```bash
+curl https://api.opensocial.community:8443/health
+```
