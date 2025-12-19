@@ -1,0 +1,26 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.membership",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "User's membership in a community (stored in user's repo)",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["community", "joinedAt"],
+        "properties": {
+          "community": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the community"
+          },
+          "joinedAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

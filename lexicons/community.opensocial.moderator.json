@@ -1,0 +1,22 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.moderator",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Reference to labeler service for community moderation",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "required": ["labeler"],
+        "properties": {
+          "labeler": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the labeler service to use for moderation"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.admins",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "List of community administrators with permissions",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "required": ["admins"],
+        "properties": {
+          "admins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["did", "permissions"],
+              "properties": {
+                "did": {
+                  "type": "string",
+                  "format": "did"
+                },
+                "permissions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": ["edit_profile", "manage_admins", "moderate", "post"]
+                  }
+                },
+                "addedAt": {
+                  "type": "string",
+                  "format": "datetime"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
