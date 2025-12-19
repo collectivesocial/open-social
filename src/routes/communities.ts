@@ -47,11 +47,11 @@ router.post('/', verifyApiKey, async (req: AuthenticatedRequest, res) => {
       console.error('PDS account creation failed:', error);
       return res.status(500).json({ 
         error: 'Failed to create PDS account',
-        details: error.message || 'Unknown error'
+        details: (error as any).message || 'Unknown error'
       });
     }
 
-    const accountData = await createResponse.json();
+    const accountData = await createResponse.json() as { did: string; handle: string };
     const did = accountData.did;
 
     console.log(`Created community account with DID: ${did}`);
