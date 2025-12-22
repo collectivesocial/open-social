@@ -17,13 +17,12 @@ interface CommunityProfile {
 
 interface MembershipRecord {
   community: string; // DID of the community
-  joinedAt: string;
+  role: string; // member, admin, moderator, etc.
+  since: string; // ISO timestamp
 }
 
-interface MemberRecord {
-  userDid: string;
-  membershipRef: string; // AT-URI reference to the user's membership record
-  confirmedAt: string;
+interface MembershipProofRecord {
+  cid: string; // CID of the user's membership record
 }
 
 function ifString(val: unknown): string | undefined {
@@ -55,8 +54,6 @@ async function getSessionAgent(
   res.setHeader('Vary', 'Cookie');
 
   const session = await getIronSession<Session>(req, res, sessionOptions);
-  
-  console.log('Session check - DID:', session.did);
   
   if (!session.did) {
     console.log('No DID in session');
@@ -95,13 +92,10 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
     res.setHeader('cache-control', 'no-store');
 
     const params = new URLSearchParams(req.originalUrl.split('?')[1]);
-    console.log('Callback params:', Array.from(params.entries()));
     
     try {
       // Load the session cookie
       const session = await getIronSession<Session>(req, res, sessionOptions);
-
-      console.log('Existing session DID:', session.did);
 
       // If the user is already signed in, destroy the old credentials
       if (session.did) {
@@ -114,17 +108,12 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
       }
 
       // Complete the OAuth flow
-      console.log('Completing OAuth callback...');
       const oauth = await oauthClient.callback(params);
-      console.log('OAuth callback complete, DID:', oauth.session.did);
 
       // Update the session cookie
       session.did = oauth.session.did;
-      console.log('Saving session with DID:', session.did);
 
       await session.save();
-      console.log('Session saved successfully');
-      console.log('Response headers:', res.getHeaders());
     } catch (err) {
       console.error('OAuth callback failed:', err);
     }
@@ -133,7 +122,6 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
     const redirectUrl = config.nodeEnv === 'production'
       ? config.serviceUrl || 'http://127.0.0.1:5174'
       : 'http://127.0.0.1:5174';
-    console.log('Redirecting to:', redirectUrl);
     return res.redirect(redirectUrl);
   });
 
@@ -185,7 +173,6 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
   // Get current user
   router.get('/users/me', async (req: Request, res: Response) => {
     try {
-      console.log('Request cookies:', req.headers.cookie);
       const agent = await getSessionAgent(req, res, oauthClient);
       
       if (!agent) {
@@ -230,43 +217,76 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
             const communityDid = membershipValue.community;
             const membershipUri = record.uri;
 
-            // Fetch community profile
-            const profileResponse = await agent.api.com.atproto.repo.getRecord({
-              repo: communityDid,
-              collection: 'community.opensocial.profile',
-              rkey: 'self',
+            // Get community credentials from database
+            const community = await db
+              .selectFrom('communities')
+              .selectAll()
+              .where('did', '=', communityDid)
+              .executeTakeFirst();
+
+            if (!community) {
+              console.warn(`Community ${communityDid} not found in database`);
+              return null;
+            }
+
+            // Create agent for the community
+            const communityAgent = new BskyAgent({ service: community.pds_host });
+            await communityAgent.login({
+              identifier: community.handle,
+              password: community.app_password,
             });
 
-            const profileValue = profileResponse.data.value as CommunityProfile;
+            // Fetch community profile using the community's own agent
+            try {
+              const profileResponse = await communityAgent.api.com.atproto.repo.getRecord({
+                repo: communityDid,
+                collection: 'community.opensocial.profile',
+                rkey: 'self',
+              });
 
-            // Check if community has confirmed this membership
-            const membersResponse = await agent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: 'community.opensocial.member',
-            });
+              const profileValue = profileResponse.data.value as CommunityProfile;
 
-            const isConfirmed = membersResponse.data.records.some(
-              (member: any) => {
-                const memberValue = member.value as MemberRecord;
-                return memberValue.membershipRef === membershipUri;
-              }
-            );
+              // Check if community has confirmed this membership via membershipProof
+              const proofsResponse = await communityAgent.api.com.atproto.repo.listRecords({
+                repo: communityDid,
+                collection: 'community.opensocial.membershipProof',
+              });
 
-            return {
-              uri: record.uri,
-              cid: record.cid,
-              communityDid,
-              joinedAt: membershipValue.joinedAt,
-              status: isConfirmed ? 'active' : 'pending',
-              community: {
-                did: communityDid,
-                displayName: profileValue.displayName,
-                description: profileValue.description,
-                avatar: profileValue.avatar,
-              },
-            };
+              // Get the membership record details to compare CID
+              const membershipRecordResponse = await agent.api.com.atproto.repo.getRecord({
+                repo: agent.assertDid,
+                collection: 'community.opensocial.membership',
+                rkey: record.uri.split('/').pop()!,
+              });
+
+              const isConfirmed = proofsResponse.data.records.some(
+                (proof: any) => {
+                  const proofValue = proof.value as MembershipProofRecord;
+                  // Check if the proof's CID matches the membership record's CID
+                  return proofValue.cid === membershipRecordResponse.data.cid;
+                }
+              );
+
+              return {
+                uri: record.uri,
+                cid: record.cid,
+                communityDid,
+                joinedAt: membershipValue.since,
+                role: membershipValue.role,
+                status: isConfirmed ? 'active' : 'pending',
+                community: {
+                  did: communityDid,
+                  displayName: profileValue.displayName,
+                  description: profileValue.description,
+                  avatar: profileValue.avatar,
+                },
+              };
+            } catch (profileErr) {
+              console.warn(`Failed to fetch profile for community ${communityDid}:`, profileErr instanceof Error ? profileErr.message : profileErr);
+              return null;
+            }
           } catch (err) {
-            console.warn(`Failed to fetch community details:`, err);
+            console.error(`Failed to process membership record:`, err);
             return null;
           }
         })
@@ -311,8 +331,6 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
         const pdsHost = config.pdsUrl || 'https://opensocial.community';
         const accountPassword = crypto.randomBytes(32).toString('hex');
 
-        console.log(`Creating PDS account for ${handle}...`);
-
         // Create account on PDS
         const createResponse = await fetch(`${pdsHost}/xrpc/com.atproto.server.createAccount`, {
           method: 'POST',
@@ -336,8 +354,6 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
         const accountData = await createResponse.json() as { did: string; handle: string };
         communityDid = accountData.did;
         communityHandle = handle;
-
-        console.log(`Created community account with DID: ${communityDid}`);
 
         // Wait for account to be ready
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -412,29 +428,45 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
       }
 
       // Create community profile
-      await communityAgent.api.com.atproto.repo.putRecord({
-        repo: communityDid,
-        collection: 'community.opensocial.profile',
-        rkey: 'self',
-        record: {
-          $type: 'community.opensocial.profile',
-          displayName,
-          description: description || '',
-          createdAt: new Date().toISOString(),
-        },
-      });
+      try {
+        await communityAgent.api.com.atproto.repo.putRecord({
+          repo: communityDid,
+          collection: 'community.opensocial.profile',
+          rkey: 'self',
+          record: {
+            $type: 'community.opensocial.profile',
+            displayName,
+            description: description || '',
+            createdAt: new Date().toISOString(),
+          },
+        });
+      } catch (err) {
+        console.error('Failed to create profile record:', err);
+        return res.status(500).json({ 
+          error: 'Failed to create community profile',
+          details: err instanceof Error ? err.message : 'Unknown error'
+        });
+      }
 
       // Create admin list with creator as first admin
-      await communityAgent.api.com.atproto.repo.putRecord({
-        repo: communityDid,
-        collection: 'community.opensocial.admins',
-        rkey: 'self',
-        record: {
-          $type: 'community.opensocial.admins',
-          admins: [agent.assertDid],
-          createdAt: new Date().toISOString(),
-        },
-      });
+      try {
+        await communityAgent.api.com.atproto.repo.putRecord({
+          repo: communityDid,
+          collection: 'community.opensocial.admins',
+          rkey: 'self',
+          record: {
+            $type: 'community.opensocial.admins',
+            admins: [agent.assertDid],
+            createdAt: new Date().toISOString(),
+          },
+        });
+      } catch (err) {
+        console.error('Failed to create admins list:', err);
+        return res.status(500).json({ 
+          error: 'Failed to create admins list',
+          details: err instanceof Error ? err.message : 'Unknown error'
+        });
+      }
 
       // Create membership record in user's repo
       const membershipRecord = await agent.api.com.atproto.repo.createRecord({
@@ -443,19 +475,18 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
         record: {
           $type: 'community.opensocial.membership',
           community: communityDid,
-          joinedAt: new Date().toISOString(),
+          role: 'admin', // Creator is admin
+          since: new Date().toISOString(),
         },
       });
 
-      // Create member confirmation in community's repo
+      // Create membershipProof in community's repo using the membership record's CID
       await communityAgent.api.com.atproto.repo.createRecord({
         repo: communityDid,
-        collection: 'community.opensocial.member',
+        collection: 'community.opensocial.membershipProof',
         record: {
-          $type: 'community.opensocial.member',
-          userDid: agent.assertDid,
-          membershipRef: membershipRecord.data.uri,
-          confirmedAt: new Date().toISOString(),
+          $type: 'community.opensocial.membershipProof',
+          cid: membershipRecord.data.cid,
         },
       });
 
