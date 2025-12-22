@@ -28,6 +28,7 @@ const upload = multer({
 interface CommunityProfile {
   displayName: string;
   description?: string;
+  type?: 'open' | 'admin-approved' | 'private';
   avatar?: string | { $type: string; ref: { $link: string }; mimeType: string };
 }
 
@@ -474,6 +475,7 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
             $type: 'community.opensocial.profile',
             displayName,
             description: description || '',
+            type: 'open', // Default to open community
             createdAt: new Date().toISOString(),
           },
         });
@@ -620,6 +622,7 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
           did: communityDid,
           displayName: profileValue.displayName,
           description: profileValue.description,
+          type: profileValue.type || 'open', // Default to 'open' if not set
           avatar: avatarUrl,
         },
         memberCount,
@@ -726,11 +729,16 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
       }
 
       const communityDid = decodeURIComponent(req.params.did);
-      const { displayName, description } = req.body;
+      const { displayName, description, type } = req.body;
 
       // Validate input
       if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
         return res.status(400).json({ error: 'displayName is required' });
+      }
+
+      // Validate type if provided
+      if (type && !['open', 'admin-approved', 'private'].includes(type)) {
+        return res.status(400).json({ error: 'type must be "open", "admin-approved", or "private"' });
       }
 
       // Get community from database
@@ -782,6 +790,7 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
           $type: 'community.opensocial.profile',
           displayName: displayName.trim(),
           description: description ? description.trim() : '',
+          type: type || currentProfile.type || 'open',
         },
       });
 

@@ -34,6 +34,11 @@
             "type": "string",
             "format": "datetime"
           },
+          "type": {
+            "type": "string",
+            "enum": ["open", "admin-approved", "private"],
+            "description": "The type of community: open (anyone can join), admin-approved (requires approval), or private (invite-only)"
+          },
           "guidelines": {
             "type": "string",
             "maxLength": 3000,
