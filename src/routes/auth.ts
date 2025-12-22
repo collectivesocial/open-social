@@ -8,6 +8,23 @@ import { config } from '../config';
 import type { Kysely } from 'kysely';
 import type { Database } from '../db';
 
+interface CommunityProfile {
+  displayName: string;
+  description?: string;
+  avatar?: string;
+}
+
+interface MembershipRecord {
+  community: string; // DID of the community
+  joinedAt: string;
+}
+
+interface MemberRecord {
+  userDid: string;
+  membershipRef: string; // AT-URI reference to the user's membership record
+  confirmedAt: string;
+}
+
 function ifString(val: unknown): string | undefined {
   return typeof val === 'string' && val.length > 0 ? val : undefined;
 }
@@ -186,6 +203,81 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
     } catch (err) {
       console.error('Failed to get user:', err);
       return res.status(500).json({ error: 'Failed to get user' });
+    }
+  });
+
+  // Get user's community memberships
+  router.get('/users/me/memberships', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, oauthClient);
+      
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Fetch user's membership records
+      const membershipsResponse = await agent.api.com.atproto.repo.listRecords({
+        repo: agent.assertDid,
+        collection: 'community.opensocial.membership',
+      });
+
+      // Fetch details for each community
+      const memberships = await Promise.all(
+        membershipsResponse.data.records.map(async (record: any) => {
+          try {
+            const membershipValue = record.value as MembershipRecord;
+            const communityDid = membershipValue.community;
+            const membershipUri = record.uri;
+
+            // Fetch community profile
+            const profileResponse = await agent.api.com.atproto.repo.getRecord({
+              repo: communityDid,
+              collection: 'community.opensocial.profile',
+              rkey: 'self',
+            });
+
+            const profileValue = profileResponse.data.value as CommunityProfile;
+
+            // Check if community has confirmed this membership
+            const membersResponse = await agent.api.com.atproto.repo.listRecords({
+              repo: communityDid,
+              collection: 'community.opensocial.member',
+            });
+
+            const isConfirmed = membersResponse.data.records.some(
+              (member: any) => {
+                const memberValue = member.value as MemberRecord;
+                return memberValue.membershipRef === membershipUri;
+              }
+            );
+
+            return {
+              uri: record.uri,
+              cid: record.cid,
+              communityDid,
+              joinedAt: membershipValue.joinedAt,
+              status: isConfirmed ? 'active' : 'pending',
+              community: {
+                did: communityDid,
+                displayName: profileValue.displayName,
+                description: profileValue.description,
+                avatar: profileValue.avatar,
+              },
+            };
+          } catch (err) {
+            console.warn(`Failed to fetch community details:`, err);
+            return null;
+          }
+        })
+      );
+
+      // Filter out null entries (failed fetches)
+      const validMemberships = memberships.filter((m): m is NonNullable<typeof m> => m !== null);
+
+      return res.json({ memberships: validMemberships });
+    } catch (err) {
+      console.error('Failed to get memberships:', err);
+      return res.status(500).json({ error: 'Failed to get memberships' });
     }
   });
 
