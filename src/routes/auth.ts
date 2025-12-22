@@ -5,14 +5,30 @@ import { getIronSession } from 'iron-session';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { NodeOAuthClient } from '@atproto/oauth-client-node';
 import crypto from 'crypto';
+import multer from 'multer';
 import { config } from '../config';
 import type { Kysely } from 'kysely';
 import type { Database } from '../db';
 
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 1024 * 1024, // 1MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  },
+});
+
 interface CommunityProfile {
   displayName: string;
   description?: string;
-  avatar?: string;
+  avatar?: string | { $type: string; ref: { $link: string }; mimeType: string };
 }
 
 interface MembershipRecord {
@@ -23,6 +39,25 @@ interface MembershipRecord {
 
 interface MembershipProofRecord {
   cid: string; // CID of the user's membership record
+}
+
+// Helper to convert blob reference to CDN URL
+function blobToUrl(blob: any, did: string, pdsHost: string): string | undefined {
+  if (!blob) return undefined;
+  if (typeof blob === 'string') return blob;
+  
+  // Handle BlobRef object from @atproto/api
+  if (blob.ref) {
+    const cid = typeof blob.ref === 'string' ? blob.ref : blob.ref.toString();
+    return `${pdsHost}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`;
+  }
+  
+  // Handle plain blob object with $type
+  if (blob.$type === 'blob' && blob.ref?.$link) {
+    return `${pdsHost}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${blob.ref.$link}`;
+  }
+  
+  return undefined;
 }
 
 function ifString(val: unknown): string | undefined {
@@ -246,6 +281,8 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
 
               const profileValue = profileResponse.data.value as CommunityProfile;
 
+              const avatarUrl = blobToUrl(profileValue.avatar, communityDid, community.pds_host);
+
               // Check if community has confirmed this membership via membershipProof
               const proofsResponse = await communityAgent.api.com.atproto.repo.listRecords({
                 repo: communityDid,
@@ -278,7 +315,7 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
                   did: communityDid,
                   displayName: profileValue.displayName,
                   description: profileValue.description,
-                  avatar: profileValue.avatar,
+                  avatar: avatarUrl,
                 },
               };
             } catch (profileErr) {
@@ -503,6 +540,178 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
       console.error('Failed to create community:', err);
       return res.status(500).json({ 
         error: 'Failed to create community',
+        details: err instanceof Error ? err.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Get community details
+  router.get('/communities/:did', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, oauthClient);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const communityDid = decodeURIComponent(req.params.did);
+
+      // Get community from database
+      const community = await db
+        .selectFrom('communities')
+        .selectAll()
+        .where('did', '=', communityDid)
+        .executeTakeFirst();
+
+      if (!community) {
+        return res.status(404).json({ error: 'Community not found' });
+      }
+
+      // Create community agent
+      const communityAgent = new BskyAgent({ service: community.pds_host });
+      await communityAgent.login({
+        identifier: community.handle,
+        password: community.app_password,
+      });
+
+      // Fetch community profile
+      const profileResponse = await communityAgent.api.com.atproto.repo.getRecord({
+        repo: communityDid,
+        collection: 'community.opensocial.profile',
+        rkey: 'self',
+      });
+
+      const profileValue = profileResponse.data.value as CommunityProfile;
+
+      const avatarUrl = blobToUrl(profileValue.avatar, communityDid, community.pds_host);
+
+      // Count members (membership proofs)
+      const proofsResponse = await communityAgent.api.com.atproto.repo.listRecords({
+        repo: communityDid,
+        collection: 'community.opensocial.membershipProof',
+      });
+
+      const memberCount = proofsResponse.data.records.length;
+
+      // Check if user is admin
+      const adminsResponse = await communityAgent.api.com.atproto.repo.getRecord({
+        repo: communityDid,
+        collection: 'community.opensocial.admins',
+        rkey: 'self',
+      });
+
+      const adminsValue = adminsResponse.data.value as { admins: string[] };
+      const isAdmin = adminsValue.admins.includes(agent.assertDid);
+
+      // Get user's role from their membership record
+      const membershipResponse = await agent.api.com.atproto.repo.listRecords({
+        repo: agent.assertDid,
+        collection: 'community.opensocial.membership',
+      });
+
+      const userMembership = membershipResponse.data.records.find((record: any) => {
+        const value = record.value as MembershipRecord;
+        return value.community === communityDid;
+      });
+
+      const userRole = userMembership ? (userMembership.value as MembershipRecord).role : undefined;
+
+      return res.json({
+        community: {
+          did: communityDid,
+          displayName: profileValue.displayName,
+          description: profileValue.description,
+          avatar: avatarUrl,
+        },
+        memberCount,
+        isAdmin,
+        userRole,
+      });
+    } catch (err) {
+      console.error('Failed to get community details:', err);
+      return res.status(500).json({ 
+        error: 'Failed to get community details',
+        details: err instanceof Error ? err.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Upload community avatar
+  router.post('/communities/:did/avatar', upload.single('avatar'), async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, oauthClient);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const communityDid = decodeURIComponent(req.params.did);
+
+      // Get community from database
+      const community = await db
+        .selectFrom('communities')
+        .selectAll()
+        .where('did', '=', communityDid)
+        .executeTakeFirst();
+
+      if (!community) {
+        return res.status(404).json({ error: 'Community not found' });
+      }
+
+      // Check if user is admin
+      const communityAgent = new BskyAgent({ service: community.pds_host });
+      await communityAgent.login({
+        identifier: community.handle,
+        password: community.app_password,
+      });
+
+      const adminsResponse = await communityAgent.api.com.atproto.repo.getRecord({
+        repo: communityDid,
+        collection: 'community.opensocial.admins',
+        rkey: 'self',
+      });
+
+      const adminsValue = adminsResponse.data.value as { admins: string[] };
+      if (!adminsValue.admins.includes(agent.assertDid)) {
+        return res.status(403).json({ error: 'Not authorized. Must be an admin.' });
+      }
+
+      // Get uploaded file from multipart form data
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      // Upload blob to community's PDS
+      const uploadResponse = await communityAgent.api.com.atproto.repo.uploadBlob(file.buffer, {
+        encoding: file.mimetype,
+      });
+
+      const blobRef = uploadResponse.data.blob;
+
+      // Update community profile with new avatar
+      const profileResponse = await communityAgent.api.com.atproto.repo.getRecord({
+        repo: communityDid,
+        collection: 'community.opensocial.profile',
+        rkey: 'self',
+      });
+
+      const currentProfile = profileResponse.data.value as CommunityProfile;
+
+      await communityAgent.api.com.atproto.repo.putRecord({
+        repo: communityDid,
+        collection: 'community.opensocial.profile',
+        rkey: 'self',
+        record: {
+          ...currentProfile,
+          $type: 'community.opensocial.profile',
+          avatar: blobRef,
+        },
+      });
+
+      return res.json({ success: true, avatar: blobRef });
+    } catch (err) {
+      console.error('Failed to upload avatar:', err);
+      return res.status(500).json({ 
+        error: 'Failed to upload avatar',
         details: err instanceof Error ? err.message : 'Unknown error'
       });
     }
