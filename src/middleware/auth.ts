@@ -56,11 +56,18 @@ export function createVerifyApiKey(db: Kysely<Database>) {
           if (verifyApiKeyHash(apiKey, candidate.api_key)) {
             app = candidate;
             // Populate the lookup hash so this path is never needed again.
-            await db
-              .updateTable('apps')
-              .set({ key_lookup_hash: lookupHash })
-              .where('app_id', '=', candidate.app_id)
-              .execute();
+            // Ignore any unique-constraint conflicts from concurrent requests
+            // backfilling the same row (all concurrent callers compute the
+            // same hash for the same key, so the value is idempotent).
+            try {
+              await db
+                .updateTable('apps')
+                .set({ key_lookup_hash: lookupHash })
+                .where('app_id', '=', candidate.app_id)
+                .execute();
+            } catch (backfillErr) {
+              logger.warn({ error: backfillErr, appId: candidate.app_id }, 'Failed to backfill key_lookup_hash');
+            }
             break;
           }
         }

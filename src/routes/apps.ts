@@ -326,11 +326,15 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
         for (const candidate of legacyApps) {
           if (verifyApiKey(apiKey, candidate.api_key)) {
             app = candidate;
-            await db
-              .updateTable('apps')
-              .set({ key_lookup_hash: lookupHash })
-              .where('app_id', '=', candidate.app_id)
-              .execute();
+            try {
+              await db
+                .updateTable('apps')
+                .set({ key_lookup_hash: lookupHash })
+                .where('app_id', '=', candidate.app_id)
+                .execute();
+            } catch (backfillErr) {
+              logger.warn({ error: backfillErr, appId: candidate.app_id }, 'Failed to backfill key_lookup_hash');
+            }
             break;
           }
         }
