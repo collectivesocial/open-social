@@ -24,6 +24,15 @@ const API_KEY_SCRYPT_N = 1 << 14; // CPU/memory cost
 const API_KEY_SCRYPT_r = 8;
 const API_KEY_SCRYPT_p = 1;
 
+// Parameters for API key lookup hashing.
+// This adds computational effort on top of the fast HMAC while
+// remaining cheaper than the full API key hash.
+const API_KEY_LOOKUP_KEY_LENGTH = 16; // 128-bit lookup token
+const API_KEY_LOOKUP_SCRYPT_N = 1 << 12;
+const API_KEY_LOOKUP_SCRYPT_r = 8;
+const API_KEY_LOOKUP_SCRYPT_p = 1;
+const API_KEY_LOOKUP_SALT = 'api-key-lookup-v1';
+
 /**
  * Derive the 32-byte key from the hex config value.
  * Throws at startup if ENCRYPTION_KEY is missing or malformed.
@@ -113,19 +122,31 @@ export function decryptIfNeeded(value: string): string {
 }
 
 /**
- * Compute a fast, deterministic HMAC-SHA256 lookup token for an API key.
- * This is NOT used as the security hash — it is stored alongside the
- * scrypt hash purely to allow efficient single-row database lookups
- * (since scrypt uses a random salt and cannot be matched in SQL).
+ * Compute a deterministic lookup token for an API key using a keyed HMAC
+ * followed by a small scrypt derivation to add computational effort.
+ * This is NOT used as the primary security hash — it is stored alongside
+ * the scrypt hash purely to allow efficient single-row database lookups
+ * (since the main scrypt hash uses a random salt and cannot be matched in SQL).
  *
  * Uses the server's ENCRYPTION_KEY as the HMAC secret so the token is
  * also server-bound: a stolen database alone is not enough to correlate
  * lookup hashes back to raw keys.
  *
- * Returns a hex-encoded HMAC-SHA256 digest.
+ * Returns a hex-encoded scrypt-derived digest.
  */
 export function hashApiKeyLookup(apiKey: string): string {
-  return crypto.createHmac('sha256', getKey()).update(apiKey).digest('hex');
+  const hmac = crypto.createHmac('sha256', getKey()).update(apiKey).digest();
+  const derived = crypto.scryptSync(
+    hmac,
+    API_KEY_LOOKUP_SALT,
+    API_KEY_LOOKUP_KEY_LENGTH,
+    {
+      N: API_KEY_LOOKUP_SCRYPT_N,
+      r: API_KEY_LOOKUP_SCRYPT_r,
+      p: API_KEY_LOOKUP_SCRYPT_p,
+    }
+  );
+  return derived.toString('hex');
 }
 
 /**
