@@ -113,15 +113,19 @@ export function decryptIfNeeded(value: string): string {
 }
 
 /**
- * Compute a fast, deterministic SHA-256 lookup hash for an API key.
+ * Compute a fast, deterministic HMAC-SHA256 lookup token for an API key.
  * This is NOT used as the security hash — it is stored alongside the
  * scrypt hash purely to allow efficient single-row database lookups
  * (since scrypt uses a random salt and cannot be matched in SQL).
  *
- * Returns a hex-encoded SHA-256 digest of the raw key.
+ * Uses the server's ENCRYPTION_KEY as the HMAC secret so the token is
+ * also server-bound: a stolen database alone is not enough to correlate
+ * lookup hashes back to raw keys.
+ *
+ * Returns a hex-encoded HMAC-SHA256 digest.
  */
 export function hashApiKeyLookup(apiKey: string): string {
-  return crypto.createHash('sha256').update(apiKey).digest('hex');
+  return crypto.createHmac('sha256', getKey()).update(apiKey).digest('hex');
 }
 
 /**
