@@ -307,12 +307,34 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
 
       const lookupHash = hashApiKeyLookup(apiKey);
 
-      const app = await db
+      let app = await db
         .selectFrom('apps')
         .selectAll()
         .where('status', '=', 'active')
         .where('key_lookup_hash', '=', lookupHash)
         .executeTakeFirst();
+
+      // Backward-compat: backfill lookup hash for pre-migration apps on first use.
+      if (!app) {
+        const legacyApps = await db
+          .selectFrom('apps')
+          .selectAll()
+          .where('status', '=', 'active')
+          .where('key_lookup_hash', 'is', null)
+          .execute();
+
+        for (const candidate of legacyApps) {
+          if (verifyApiKey(apiKey, candidate.api_key)) {
+            app = candidate;
+            await db
+              .updateTable('apps')
+              .set({ key_lookup_hash: lookupHash })
+              .where('app_id', '=', candidate.app_id)
+              .execute();
+            break;
+          }
+        }
+      }
 
       if (!app || !verifyApiKey(apiKey, app.api_key)) {
         return res.status(401).json({ error: 'Invalid API key' });

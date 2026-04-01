@@ -30,15 +30,41 @@ export function createVerifyApiKey(db: Kysely<Database>) {
     }
 
     try {
-      // Compute the fast lookup hash so we can find the exact app row in O(1).
+      // Compute the fast HMAC-SHA256 lookup token so we can find the exact
+      // app row in O(1) rather than scanning every row with slow scrypt.
       const lookupHash = hashApiKeyLookup(apiKey);
 
-      const app = await db
+      let app = await db
         .selectFrom('apps')
         .selectAll()
         .where('status', '=', 'active')
         .where('key_lookup_hash', '=', lookupHash)
         .executeTakeFirst();
+
+      // Backward-compat: apps registered before migration 006 have a NULL
+      // key_lookup_hash.  Scan only those rows (scrypt per row) and, on
+      // success, eagerly write the lookup hash so subsequent calls are fast.
+      if (!app) {
+        const legacyApps = await db
+          .selectFrom('apps')
+          .selectAll()
+          .where('status', '=', 'active')
+          .where('key_lookup_hash', 'is', null)
+          .execute();
+
+        for (const candidate of legacyApps) {
+          if (verifyApiKeyHash(apiKey, candidate.api_key)) {
+            app = candidate;
+            // Populate the lookup hash so this path is never needed again.
+            await db
+              .updateTable('apps')
+              .set({ key_lookup_hash: lookupHash })
+              .where('app_id', '=', candidate.app_id)
+              .execute();
+            break;
+          }
+        }
+      }
 
       if (!app || !verifyApiKeyHash(apiKey, app.api_key)) {
         return res.status(401).json({ error: 'Invalid API key' });
