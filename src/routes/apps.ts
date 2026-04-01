@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import { config } from '../config';
 import type { Kysely } from 'kysely';
 import type { Database } from '../db';
-import { hashApiKey, verifyApiKey } from '../lib/crypto';
+import { hashApiKey, hashApiKeyLookup, verifyApiKey } from '../lib/crypto';
 import { registerAppWithPermissionsSchema, updateAppSchema, appDefaultPermissionSchema } from '../validation/schemas';
 import { logger } from '../lib/logger';
 
@@ -85,6 +85,7 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
           domain,
           creator_did: creatorDid,
           api_key: hashApiKey(apiKey),
+          key_lookup_hash: hashApiKeyLookup(apiKey),
           created_at: new Date(),
           updated_at: new Date(),
           status: 'active',
@@ -279,6 +280,7 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
         .updateTable('apps')
         .set({
           api_key: hashApiKey(newApiKey),
+          key_lookup_hash: hashApiKeyLookup(newApiKey),
           updated_at: new Date(),
         })
         .where('app_id', '=', req.params.appId)
@@ -303,11 +305,13 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
         return res.status(401).json({ error: 'API key required (X-Api-Key header)' });
       }
 
+      const lookupHash = hashApiKeyLookup(apiKey);
+
       const app = await db
         .selectFrom('apps')
         .selectAll()
         .where('status', '=', 'active')
-        .where('api_key', 'is not', null)
+        .where('key_lookup_hash', '=', lookupHash)
         .executeTakeFirst();
 
       if (!app || !verifyApiKey(apiKey, app.api_key)) {

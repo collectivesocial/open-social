@@ -24,6 +24,8 @@ export interface App {
   domain: string;
   creator_did: string;
   api_key: string;
+  /** SHA-256 of the raw API key — used for fast single-row lookups. */
+  key_lookup_hash: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
   status: string;

@@ -113,6 +113,18 @@ export function decryptIfNeeded(value: string): string {
 }
 
 /**
+ * Compute a fast, deterministic SHA-256 lookup hash for an API key.
+ * This is NOT used as the security hash — it is stored alongside the
+ * scrypt hash purely to allow efficient single-row database lookups
+ * (since scrypt uses a random salt and cannot be matched in SQL).
+ *
+ * Returns a hex-encoded SHA-256 digest of the raw key.
+ */
+export function hashApiKeyLookup(apiKey: string): string {
+  return crypto.createHash('sha256').update(apiKey).digest('hex');
+}
+
+/**
  * Hash an API key for storage using a computationally expensive KDF.
  * Uses Node's built-in scrypt with a random salt. The returned string
  * encodes the algorithm, parameters, salt, and hash in a stable format:

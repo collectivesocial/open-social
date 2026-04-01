@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import type { Kysely } from 'kysely';
 import type { Database } from '../db';
-import { hashApiKey, verifyApiKey as verifyApiKeyHash } from '../lib/crypto';
+import { hashApiKeyLookup, verifyApiKey as verifyApiKeyHash } from '../lib/crypto';
 import { logger } from '../lib/logger';
 
 export interface AuthenticatedRequest extends Request {
@@ -30,12 +30,14 @@ export function createVerifyApiKey(db: Kysely<Database>) {
     }
 
     try {
-      // Look up the app and verify the provided key against the stored hash
+      // Compute the fast lookup hash so we can find the exact app row in O(1).
+      const lookupHash = hashApiKeyLookup(apiKey);
+
       const app = await db
         .selectFrom('apps')
         .selectAll()
         .where('status', '=', 'active')
-        .where('api_key', 'is not', null)
+        .where('key_lookup_hash', '=', lookupHash)
         .executeTakeFirst();
 
       if (!app || !verifyApiKeyHash(apiKey, app.api_key)) {

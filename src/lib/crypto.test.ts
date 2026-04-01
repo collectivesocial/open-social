@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { encrypt, decrypt, isEncrypted, decryptIfNeeded, hashApiKey, verifyApiKey } from '../lib/crypto';
+import { encrypt, decrypt, isEncrypted, decryptIfNeeded, hashApiKey, hashApiKeyLookup, verifyApiKey } from '../lib/crypto';
 
 describe('crypto.ts', () => {
   describe('encrypt and decrypt', () => {
@@ -116,6 +116,31 @@ describe('crypto.ts', () => {
       const result = decryptIfNeeded(plainPassword);
 
       expect(result).toBe(plainPassword);
+    });
+  });
+
+  describe('hashApiKeyLookup', () => {
+    it('should return a 64-char hex SHA-256 digest', () => {
+      const key = 'osc_abc123';
+      const hash = hashApiKeyLookup(key);
+
+      expect(hash).toHaveLength(64);
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('should be deterministic for the same input', () => {
+      const key = 'osc_abc123';
+      expect(hashApiKeyLookup(key)).toBe(hashApiKeyLookup(key));
+    });
+
+    it('should produce different hashes for different keys', () => {
+      expect(hashApiKeyLookup('key1')).not.toBe(hashApiKeyLookup('key2'));
+    });
+
+    it('should handle empty strings', () => {
+      const hash = hashApiKeyLookup('');
+      expect(hash).toHaveLength(64);
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
     });
   });
 
