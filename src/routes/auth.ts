@@ -424,7 +424,9 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
     }
   });
 
-  // Create a new community (requires an existing AT Protocol account)
+  // Create a new community
+  // mode: 'create-new' — provisions a Cirrus PDS (Cloudflare Worker)
+  // mode: 'connect-existing' (default) — connects an existing AT Protocol account
   router.post('/users/me/communities', async (req: Request, res: Response) => {
     try {
       const agent = await getSessionAgent(req, res, oauthClient);
@@ -433,6 +435,117 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
+      const mode = req.body.mode || 'connect-existing';
+
+      // ── CREATE-NEW: Provision a Cirrus PDS ──────────────────────────
+      if (mode === 'create-new') {
+        const { createCommunityNewOAuthSchema } = await import('../validation/schemas');
+        const parsed = createCommunityNewOAuthSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+        }
+
+        const { communityName, displayName, description } = parsed.data;
+
+        const { provisionCommunityPds } = await import('../services/cirrus-provisioner');
+
+        let result;
+        try {
+          result = await provisionCommunityPds(db, {
+            communityName,
+            displayName,
+            creatorDid: agent.assertDid,
+            description,
+          });
+        } catch (err: any) {
+          logger.error({ error: err, communityName }, 'Cirrus provisioning failed');
+          return res.status(500).json({
+            error: 'Failed to provision community PDS',
+            details: err.message,
+          });
+        }
+
+        // Create ATProto records on the new Cirrus PDS
+        const communityAgent = await createCommunityAgent(db, result.did);
+
+        try {
+          // Profile record
+          await communityAgent.api.com.atproto.repo.putRecord({
+            repo: result.did,
+            collection: 'community.opensocial.profile',
+            rkey: 'self',
+            record: {
+              $type: 'community.opensocial.profile',
+              displayName,
+              description: description || '',
+              type: 'open',
+              createdAt: new Date().toISOString(),
+            },
+          });
+
+          // Admin list
+          await communityAgent.api.com.atproto.repo.putRecord({
+            repo: result.did,
+            collection: 'community.opensocial.admins',
+            rkey: 'self',
+            record: {
+              $type: 'community.opensocial.admins',
+              admins: [agent.assertDid],
+              createdAt: new Date().toISOString(),
+            },
+          });
+        } catch (err) {
+          logger.error({ error: err, did: result.did }, 'Failed to create community records on Cirrus PDS');
+        }
+
+        // Create membership record in user's repo
+        const grantedScope = getAgentScope(agent);
+        if (grantedScope && !hasScope(grantedScope, MEMBERSHIP_WRITE_SCOPE)) {
+          return res.status(403).json({
+            error: 'Insufficient scope',
+            details: `Required scope: ${MEMBERSHIP_WRITE_SCOPE}`,
+          });
+        }
+
+        try {
+          const membershipRecord = await agent.api.com.atproto.repo.createRecord({
+            repo: agent.assertDid,
+            collection: 'community.opensocial.membership',
+            record: {
+              $type: 'community.opensocial.membership',
+              community: result.did,
+              role: 'admin',
+              since: new Date().toISOString(),
+            },
+          });
+
+          await communityAgent.api.com.atproto.repo.createRecord({
+            repo: result.did,
+            collection: 'community.opensocial.membershipProof',
+            record: {
+              $type: 'community.opensocial.membershipProof',
+              cid: membershipRecord.data.cid,
+            },
+          });
+        } catch (err) {
+          logger.error({ error: err, did: result.did }, 'Failed to create membership records');
+        }
+
+        return res.json({
+          success: true,
+          community: {
+            did: result.did,
+            handle: result.handle,
+            hostname: result.hostname,
+            pdsHost: result.pdsHost,
+            displayName,
+            description,
+            pdsType: 'cirrus',
+          },
+        });
+      }
+
+      // ── CONNECT-EXISTING: Original flow (unchanged) ─────────────────
       const { displayName, description, did: existingDid, appPassword } = req.body;
 
       if (!displayName) {
@@ -492,6 +605,8 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
           pds_host: pdsHost,
           app_password: encrypt(appPassword),
           created_at: new Date(),
+          pds_type: 'external',
+          provisioning_status: 'active',
         })
         .execute();
 
@@ -575,6 +690,7 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
           handle: communityHandle,
           displayName,
           description,
+          pdsType: 'external',
         },
       });
     } catch (err) {
@@ -1432,7 +1548,9 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
       const admins = (adminRecord.data.value as any).admins || [];
 
       // Check if user is an admin
-      const isAdmin = admins.some((admin: any) => admin.did === userDid);
+      const isAdmin = admins.some((admin: any) =>
+        typeof admin === 'string' ? admin === userDid : admin.did === userDid
+      );
       if (!isAdmin) {
         return res.status(403).json({
           error: 'Only admins can delete a community',
@@ -1444,6 +1562,12 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
         return res.status(403).json({
           error: 'Community can only be deleted when there is a single admin',
         });
+      }
+
+      // If this is a Cirrus-hosted community, deprovision the PDS
+      if (community.pds_type === 'cirrus') {
+        const { deprovisionCommunityPds } = await import('../services/cirrus-provisioner');
+        await deprovisionCommunityPds(db, did);
       }
 
       // Delete from database
@@ -1462,6 +1586,159 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
         error: 'Failed to delete community',
         details: err instanceof Error ? err.message : 'Unknown error'
       });
+    }
+  });
+
+  // ── Secret management for Cirrus communities ─────────────────────────
+
+  // Export all secrets for backup (admin only, Cirrus communities only)
+  router.get('/communities/:did/secrets/backup', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, oauthClient);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { did } = req.params;
+      const userDid = agent.assertDid;
+
+      const community = await db
+        .selectFrom('communities')
+        .select(['pds_type'])
+        .where('did', '=', did)
+        .executeTakeFirst();
+
+      if (!community) {
+        return res.status(404).json({ error: 'Community not found' });
+      }
+
+      if (community.pds_type !== 'cirrus') {
+        return res.status(400).json({ error: 'Secret backup is only available for Cirrus-hosted communities' });
+      }
+
+      // Verify admin status
+      const communityAgent = await createCommunityAgent(db, did);
+      const adminRecord = await communityAgent.api.com.atproto.repo.getRecord({
+        repo: did,
+        collection: 'community.opensocial.admins',
+        rkey: 'self',
+      });
+
+      const admins = (adminRecord.data.value as any).admins || [];
+      const isAdmin = admins.some((admin: any) =>
+        typeof admin === 'string' ? admin === userDid : admin.did === userDid
+      );
+
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Only admins can export secrets' });
+      }
+
+      const { exportSecrets } = await import('../services/secret-store');
+      const secrets = await exportSecrets(db, did);
+
+      // Log the export in audit log
+      try {
+        await db
+          .insertInto('audit_log')
+          .values({
+            community_did: did,
+            admin_did: userDid,
+            action: 'secrets.exported',
+          })
+          .execute();
+      } catch (auditErr) {
+        logger.warn({ error: auditErr }, 'Failed to log secret export');
+      }
+
+      return res.json({ did, secrets });
+    } catch (err) {
+      logger.error({ error: err, communityDid: req.params.did }, 'Failed to export secrets');
+      return res.status(500).json({ error: 'Failed to export secrets' });
+    }
+  });
+
+  // Rotate a specific secret (admin only, Cirrus communities only)
+  router.post('/communities/:did/secrets/rotate/:secretName', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, oauthClient);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { did, secretName } = req.params;
+      const userDid = agent.assertDid;
+
+      const community = await db
+        .selectFrom('communities')
+        .select(['pds_type', 'worker_name'])
+        .where('did', '=', did)
+        .executeTakeFirst();
+
+      if (!community) {
+        return res.status(404).json({ error: 'Community not found' });
+      }
+
+      if (community.pds_type !== 'cirrus') {
+        return res.status(400).json({ error: 'Secret rotation is only available for Cirrus-hosted communities' });
+      }
+
+      // Verify admin status
+      const communityAgent = await createCommunityAgent(db, did);
+      const adminRecord = await communityAgent.api.com.atproto.repo.getRecord({
+        repo: did,
+        collection: 'community.opensocial.admins',
+        rkey: 'self',
+      });
+
+      const admins = (adminRecord.data.value as any).admins || [];
+      const isAdmin = admins.some((admin: any) =>
+        typeof admin === 'string' ? admin === userDid : admin.did === userDid
+      );
+
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Only admins can rotate secrets' });
+      }
+
+      const allowedSecrets = ['auth_token', 'jwt_secret'];
+      if (!allowedSecrets.includes(secretName)) {
+        return res.status(400).json({
+          error: `Cannot rotate "${secretName}". Allowed: ${allowedSecrets.join(', ')}`,
+        });
+      }
+
+      const crypto = await import('crypto');
+      const newValue = crypto.randomBytes(32).toString('hex');
+
+      // Update Cloudflare Worker secret
+      if (community.worker_name) {
+        const { setWorkerSecrets } = await import('../services/cloudflare');
+        const cfSecretName = secretName === 'auth_token' ? 'AUTH_TOKEN' : 'JWT_SECRET';
+        await setWorkerSecrets(community.worker_name, { [cfSecretName]: newValue } as any);
+      }
+
+      // Update in database
+      const { rotateSecret } = await import('../services/secret-store');
+      await rotateSecret(db, did, secretName as any, newValue);
+
+      // Audit log
+      try {
+        await db
+          .insertInto('audit_log')
+          .values({
+            community_did: did,
+            admin_did: userDid,
+            action: 'secrets.rotated',
+            metadata: JSON.stringify({ secretName }),
+          })
+          .execute();
+      } catch (auditErr) {
+        logger.warn({ error: auditErr }, 'Failed to log secret rotation');
+      }
+
+      return res.json({ success: true, secretName, rotatedAt: new Date().toISOString() });
+    } catch (err) {
+      logger.error({ error: err, communityDid: req.params.did }, 'Failed to rotate secret');
+      return res.status(500).json({ error: 'Failed to rotate secret' });
     }
   });
 
@@ -2080,13 +2357,30 @@ export function createAuthRouter(oauthClient: NodeOAuthClient, db: Kysely<Databa
 
       const enriched = await Promise.all(
         rows.map(async (row) => {
-          const app = await db.selectFrom('apps').select(['name', 'domain']).where('app_id', '=', row.app_id).executeTakeFirst();
-          return { appId: row.app_id, appName: app?.name || null, appDomain: app?.domain || null, status: row.status, reviewedBy: row.reviewed_by, createdAt: row.created_at, updatedAt: row.updated_at };
+          const app = await db.selectFrom('apps').select(['name', 'domain', 'did']).where('app_id', '=', row.app_id).executeTakeFirst();
+          let avatarUrl: string | null = null;
+          if (app?.did) {
+            const { resolveBlueskyProfile } = await import('../services/atproto');
+            const profile = await resolveBlueskyProfile(app.did);
+            avatarUrl = profile.avatar;
+          }
+          return { appId: row.app_id, appName: app?.name || null, appDomain: app?.domain || null, did: app?.did || null, avatarUrl, status: row.status, reviewedBy: row.reviewed_by, createdAt: row.created_at, updatedAt: row.updated_at };
         }),
       );
 
       // Also list all active apps so admins can discover apps to enable
-      const allApps = await db.selectFrom('apps').select(['app_id', 'name', 'domain']).where('status', '=', 'active').execute();
+      const allAppsRaw = await db.selectFrom('apps').select(['app_id', 'name', 'domain', 'did']).where('status', '=', 'active').execute();
+      const allApps = await Promise.all(
+        allAppsRaw.map(async (a) => {
+          let avatarUrl: string | null = null;
+          if (a.did) {
+            const { resolveBlueskyProfile } = await import('../services/atproto');
+            const profile = await resolveBlueskyProfile(a.did);
+            avatarUrl = profile.avatar;
+          }
+          return { ...a, avatarUrl };
+        }),
+      );
 
       res.json({ apps: enriched, allApps });
     } catch (error) {

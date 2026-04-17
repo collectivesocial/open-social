@@ -27,9 +27,104 @@ export function createCommunityRouter(db: Kysely<Database>): Router {
   const auditLog = createAuditLogService(db);
   const webhooks = createWebhookService(db);
 
-  // Create a community (requires an existing AT Protocol account)
+  // Create a community
+  // mode: 'create-new' — provisions a Cirrus PDS (Cloudflare Worker)
+  // mode: 'connect-existing' (default) — connects an existing AT Protocol account
   router.post('/', verifyApiKey, async (req: AuthenticatedRequest, res) => {
     try {
+      const mode = req.body.mode || 'connect-existing';
+
+      // ── CREATE-NEW: Provision a Cirrus PDS ──────────────────────────
+      if (mode === 'create-new') {
+        const { createCommunityNewApiKeySchema } = await import('../validation/schemas');
+        const parsed = createCommunityNewApiKeySchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+        }
+
+        const { communityName, displayName, creatorDid, description } = parsed.data;
+
+        const { provisionCommunityPds } = await import('../services/cirrus-provisioner');
+
+        let result;
+        try {
+          result = await provisionCommunityPds(db, {
+            communityName,
+            displayName,
+            creatorDid,
+            description,
+          });
+        } catch (err: any) {
+          logger.error({ error: err, communityName }, 'Cirrus provisioning failed');
+          return res.status(500).json({
+            error: 'Failed to provision community PDS',
+            details: err.message,
+          });
+        }
+
+        // Create ATProto records on the new PDS
+        try {
+          const agent = await createCommunityAgent(db, result.did);
+
+          await agent.api.com.atproto.repo.putRecord({
+            repo: result.did,
+            collection: 'community.opensocial.profile',
+            rkey: 'self',
+            record: {
+              $type: 'community.opensocial.profile',
+              displayName,
+              description: description ? sanitizeUserContent(description) : '',
+              createdAt: new Date().toISOString(),
+              type: 'open',
+            },
+          });
+
+          await agent.api.com.atproto.repo.putRecord({
+            repo: result.did,
+            collection: 'community.opensocial.admins',
+            rkey: 'self',
+            record: {
+              $type: 'community.opensocial.admins',
+              admins: [{ did: creatorDid, addedAt: new Date().toISOString() }],
+            },
+          });
+
+          await agent.api.com.atproto.repo.createRecord({
+            repo: result.did,
+            collection: 'community.opensocial.membershipProof',
+            record: {
+              $type: 'community.opensocial.membershipProof',
+              memberDid: creatorDid,
+              cid: '',
+              confirmedAt: new Date().toISOString(),
+            },
+          });
+        } catch (e) {
+          logger.error({ error: e, did: result.did }, 'Failed to create community records on provisioned PDS');
+        }
+
+        await auditLog.log({
+          communityDid: result.did,
+          adminDid: creatorDid,
+          action: 'community.created',
+          metadata: { handle: result.handle, displayName, pdsType: 'cirrus' },
+        });
+
+        return res.status(201).json({
+          community: {
+            did: result.did,
+            handle: result.handle,
+            hostname: result.hostname,
+            pdsHost: result.pdsHost,
+            displayName,
+            createdAt: new Date().toISOString(),
+            pdsType: 'cirrus',
+          },
+          isAdmin: true,
+        });
+      }
+
+      // ── CONNECT-EXISTING: Original flow (unchanged) ─────────────────
       const parsed = createCommunityApiKeySchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
@@ -73,6 +168,8 @@ export function createCommunityRouter(db: Kysely<Database>): Router {
           display_name: displayName,
           pds_host: pdsHost,
           app_password: encryptedPassword,
+          pds_type: 'external',
+          provisioning_status: 'active',
         })
         .execute();
 
@@ -149,7 +246,7 @@ export function createCommunityRouter(db: Kysely<Database>): Router {
         communityDid: did,
         adminDid: creatorDid,
         action: 'community.created',
-        metadata: { handle, displayName },
+        metadata: { handle, displayName, pdsType: 'external' },
       });
 
       res.status(201).json({
@@ -159,6 +256,7 @@ export function createCommunityRouter(db: Kysely<Database>): Router {
           displayName,
           pdsHost,
           createdAt: new Date().toISOString(),
+          pdsType: 'external',
         },
         isAdmin: true,
       });

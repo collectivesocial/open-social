@@ -9,6 +9,7 @@ import type { Kysely } from 'kysely';
 import type { Database } from '../db';
 import { hashApiKey, verifyApiKey } from '../lib/crypto';
 import { registerAppWithPermissionsSchema, updateAppSchema, appDefaultPermissionSchema } from '../validation/schemas';
+import { resolveBlueskyProfile } from '../services/atproto';
 import { logger } from '../lib/logger';
 
 type Session = { did?: string };
@@ -60,7 +61,7 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
       if (!parsed.success) {
         return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
       }
-      const { name, domain, defaultPermissions } = parsed.data;
+      const { name, domain, defaultPermissions, did } = parsed.data;
 
       // Check for duplicate domain
       const existing = await db
@@ -88,6 +89,7 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
           created_at: new Date(),
           updated_at: new Date(),
           status: 'active',
+          did: did || null,
         })
         .execute();
 
@@ -134,12 +136,23 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
 
       const apps = await db
         .selectFrom('apps')
-        .select(['app_id', 'name', 'domain', 'status', 'created_at', 'updated_at'])
+        .select(['app_id', 'name', 'domain', 'status', 'created_at', 'updated_at', 'did'])
         .where('creator_did', '=', agent.assertDid)
         .orderBy('created_at', 'desc')
         .execute();
 
-      return res.json({ apps });
+      // Resolve avatars for apps that have a linked DID
+      const appsWithAvatars = await Promise.all(
+        apps.map(async (app) => {
+          if (app.did) {
+            const profile = await resolveBlueskyProfile(app.did);
+            return { ...app, avatarUrl: profile.avatar };
+          }
+          return { ...app, avatarUrl: null };
+        }),
+      );
+
+      return res.json({ apps: appsWithAvatars });
     } catch (err) {
       logger.error({ error: err }, 'Error listing apps');
       return res.status(500).json({ error: 'Failed to list apps' });
@@ -156,7 +169,7 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
 
       const app = await db
         .selectFrom('apps')
-        .select(['app_id', 'name', 'domain', 'status', 'created_at', 'updated_at'])
+        .select(['app_id', 'name', 'domain', 'status', 'created_at', 'updated_at', 'did'])
         .where('app_id', '=', req.params.appId)
         .where('creator_did', '=', agent.assertDid)
         .executeTakeFirst();
@@ -165,7 +178,14 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
         return res.status(404).json({ error: 'App not found' });
       }
 
-      return res.json({ app });
+      // Resolve avatar if a DID is linked
+      let avatarUrl: string | null = null;
+      if (app.did) {
+        const profile = await resolveBlueskyProfile(app.did);
+        avatarUrl = profile.avatar;
+      }
+
+      return res.json({ app: { ...app, avatarUrl } });
     } catch (err) {
       logger.error({ error: err, appId: req.params.appId }, 'Error getting app');
       return res.status(500).json({ error: 'Failed to get app' });
@@ -184,7 +204,7 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
       if (!parsed.success) {
         return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
       }
-      const { name, domain } = parsed.data;
+      const { name, domain, did } = parsed.data;
 
       const existing = await db
         .selectFrom('apps')
@@ -212,6 +232,7 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
       const updateValues: Record<string, any> = { updated_at: new Date() };
       if (name) updateValues.name = name;
       if (domain) updateValues.domain = domain;
+      if (did !== undefined) updateValues.did = did;
 
       await db
         .updateTable('apps')
@@ -314,12 +335,21 @@ export function createAppRouter(oauthClient: NodeOAuthClient, db: Kysely<Databas
         return res.status(401).json({ error: 'Invalid API key' });
       }
 
+      // Resolve avatar if a DID is linked
+      let avatarUrl: string | null = null;
+      if (app.did) {
+        const profile = await resolveBlueskyProfile(app.did);
+        avatarUrl = profile.avatar;
+      }
+
       return res.json({
         valid: true,
         app: {
           appId: app.app_id,
           name: app.name,
           domain: app.domain,
+          did: app.did || null,
+          avatarUrl,
         },
       });
     } catch (err) {

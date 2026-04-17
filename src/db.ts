@@ -15,6 +15,33 @@ export interface Community {
   community_type: string | null;
   member_count: number | null;
   metadata_fetched_at: Date | null;
+  // Cirrus PDS provisioning fields
+  /** 'cirrus' = hosted on Cloudflare Workers, 'external' = user-provided PDS */
+  pds_type: string;
+  /** Cloudflare Worker script name (null for external communities) */
+  worker_name: string | null;
+  /** R2 bucket name for blob storage (null for external communities) */
+  r2_bucket_name: string | null;
+  /** Provisioning lifecycle: 'pending' | 'provisioning' | 'active' | 'failed' | 'deprovisioning' */
+  provisioning_status: string;
+  /** When the Cirrus PDS was fully provisioned (null for external or pending) */
+  provisioned_at: Date | null;
+}
+
+/**
+ * Encrypted secrets for a Cirrus-hosted community PDS.
+ * Stores signing keys, auth tokens, JWT secrets, and password hashes.
+ */
+export interface CommunitySecret {
+  id: Generated<number>;
+  community_did: string;
+  /** Secret identifier, e.g. 'signing_key', 'auth_token', 'jwt_secret', 'password_hash', 'app_password' */
+  secret_name: string;
+  /** AES-256-GCM encrypted value */
+  encrypted_value: string;
+  created_at: Generated<Date>;
+  /** Timestamp of last rotation (null if never rotated) */
+  rotated_at: Date | null;
 }
 
 export interface App {
@@ -27,6 +54,8 @@ export interface App {
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
   status: string;
+  /** Optional AT Protocol DID linked to this app for profile pic / identity */
+  did: string | null;
 }
 
 export interface RateLimit {
@@ -181,6 +210,7 @@ export interface Database {
   auth_state: AuthState;
   auth_session: AuthSession;
   communities: Community;
+  community_secrets: CommunitySecret;
   apps: App;
   rate_limits: RateLimit;
   webhooks: Webhook;

@@ -22,7 +22,8 @@ export const registerAppSchema = z.object({
 export const updateAppSchema = z.object({
   name: z.string().min(3).max(100).regex(/^[a-zA-Z0-9\s\-_]+$/).optional(),
   domain: z.string().min(1).regex(/^[a-zA-Z0-9][a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}$/).optional(),
-}).refine(data => data.name || data.domain, { message: 'At least one field (name or domain) is required' });
+  did: z.string().startsWith('did:').optional().nullable(),
+}).refine(data => data.name || data.domain || data.did !== undefined, { message: 'At least one field (name, domain, or did) is required' });
 
 // Community schemas
 export const createCommunityApiKeySchema = z.object({
@@ -38,6 +39,43 @@ export const createCommunityOAuthSchema = z.object({
   appPassword: z.string().min(1, 'App password is required'),
   displayName: z.string().min(1).max(64),
   description: z.string().max(512).optional(),
+});
+
+// ── Cirrus "create-new" community schemas ────────────────────────────
+
+/** Regex: lowercase alphanumeric + hyphens, 3-63 chars, can't start/end with hyphen */
+const communityNameSchema = z
+  .string()
+  .min(3, 'Community name must be at least 3 characters')
+  .max(63, 'Community name must be at most 63 characters')
+  .regex(
+    /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/,
+    'Must be lowercase alphanumeric with hyphens; cannot start or end with a hyphen',
+  );
+
+/**
+ * Schema for creating a brand-new community with a provisioned Cirrus PDS.
+ * Used when mode === 'create-new' (OAuth path).
+ */
+export const createCommunityNewOAuthSchema = z.object({
+  mode: z.literal('create-new'),
+  communityName: communityNameSchema,
+  displayName: z.string().min(1).max(64),
+  description: z.string().max(512).optional(),
+  customDomain: z.string().max(255).optional(),
+});
+
+/**
+ * Schema for creating a brand-new community with a provisioned Cirrus PDS.
+ * Used when mode === 'create-new' (API key path).
+ */
+export const createCommunityNewApiKeySchema = z.object({
+  mode: z.literal('create-new'),
+  communityName: communityNameSchema,
+  displayName: z.string().min(1).max(64),
+  creatorDid: didSchema,
+  description: z.string().max(512).optional(),
+  customDomain: z.string().max(255).optional(),
 });
 
 export const updateCommunityProfileSchema = z.object({
@@ -222,6 +260,7 @@ export const appDefaultPermissionSchema = z.object({
 });
 
 export const registerAppWithPermissionsSchema = registerAppSchema.extend({
+  did: z.string().startsWith('did:').optional().nullable(),
   defaultPermissions: z.array(appDefaultPermissionSchema).optional(),
 });
 

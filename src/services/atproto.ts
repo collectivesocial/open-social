@@ -147,3 +147,31 @@ export function invalidateCommunityAgent(did: string): void {
 export async function getPublicAgent(pdsHost: string): Promise<AtpAgent> {
   return new AtpAgent({ service: ensureServiceUrl(pdsHost) });
 }
+
+/**
+ * Resolve a Bluesky profile to get handle, display name, and avatar.
+ * Uses the public Bluesky API — no authenticated agent needed.
+ * The returned avatar is a full CDN URL.
+ */
+export async function resolveBlueskyProfile(did: string): Promise<{
+  handle: string | null;
+  displayName: string | null;
+  avatar: string | null;
+}> {
+  try {
+    const res = await fetch(
+      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`,
+    );
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      return {
+        handle: data.handle || null,
+        displayName: data.displayName || null,
+        avatar: data.avatar || null,
+      };
+    }
+  } catch {
+    logger.warn({ did }, 'Failed to resolve Bluesky profile for app DID');
+  }
+  return { handle: null, displayName: null, avatar: null };
+}
