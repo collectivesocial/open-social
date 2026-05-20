@@ -37,6 +37,11 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    - name: Run database migrations
+      run: npm run migrate:up
+      env:
+        DATABASE_URL: postgresql://opensocial_api:test_password@localhost:5432/opensocial_test
+
     - name: Run tests
       run: npm test
       env:

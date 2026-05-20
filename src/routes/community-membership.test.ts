@@ -36,34 +36,68 @@ const MEMBERSHIP_CID = "bafyreimembership00000001";
 
 // ── Mock OAuth + agents ──────────────────────────────────────────────────────
 
-const fakeUserAgent = {
-  assertDid: USER_DID,
-  did: USER_DID,
-  signOut: vi.fn(async () => {}),
-  getProfile: vi.fn(async () => ({
-    data: {
-      did: USER_DID,
-      handle: "testuser.bsky.social",
-      displayName: "Test User",
-      avatar: undefined,
-    },
-  })),
-  api: {
-    com: {
-      atproto: {
-        repo: {
-          listRecords: vi.fn(),
-          getRecord: vi.fn(),
-          createRecord: vi.fn(),
+// Use vi.hoisted so the fake agent is available when vi.mock runs (mocks are hoisted)
+const { fakeUserAgent, mockCommunityAgent } = vi.hoisted(() => {
+  const fakeUserAgent = {
+    assertDid: "did:plc:testuser0000000000001",
+    did: "did:plc:testuser0000000000001",
+    signOut: vi.fn(async () => {}),
+    getProfile: vi.fn(async () => ({
+      data: {
+        did: "did:plc:testuser0000000000001",
+        handle: "testuser.bsky.social",
+        displayName: "Test User",
+        avatar: undefined,
+      },
+    })),
+    api: {
+      com: {
+        atproto: {
+          repo: {
+            listRecords: vi.fn(),
+            getRecord: vi.fn(),
+            createRecord: vi.fn(),
+          },
         },
       },
     },
-  },
-};
+  };
+
+  const mockCommunityAgent = {
+    api: {
+      com: {
+        atproto: {
+          repo: {
+            listRecords: vi.fn(),
+            getRecord: vi.fn(),
+            createRecord: vi.fn(),
+          },
+        },
+      },
+    },
+  };
+
+  return { fakeUserAgent, mockCommunityAgent };
+});
+
+// Mock Agent constructor so getSessionAgent returns our fake agent
+vi.mock("@atproto/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@atproto/api")>();
+  function MockAgent() {
+    return fakeUserAgent;
+  }
+  return {
+    ...actual,
+    Agent: MockAgent,
+    BskyAgent: actual.BskyAgent,
+  };
+});
 
 const mockOAuthClient = {
   authorize: vi.fn(),
-  restore: vi.fn(async () => fakeUserAgent),
+  restore: vi.fn(async () => ({
+    getTokenInfo: vi.fn(async () => ({ scope: "atproto transition:generic" })),
+  })),
   revoke: vi.fn(),
   clientMetadata: { client_id: "https://test.opensocial.local" },
 } as any;
@@ -83,20 +117,7 @@ interface Session {
 
 // ── Mock external services ───────────────────────────────────────────────────
 
-// Mock createCommunityAgent so we don't need a real PDS
-const mockCommunityAgent = {
-  api: {
-    com: {
-      atproto: {
-        repo: {
-          listRecords: vi.fn(),
-          getRecord: vi.fn(),
-          createRecord: vi.fn(),
-        },
-      },
-    },
-  },
-};
+// mockCommunityAgent is defined in vi.hoisted() above
 
 vi.mock("../services/atproto", () => ({
   createCommunityAgent: vi.fn(async () => mockCommunityAgent),
@@ -151,7 +172,6 @@ function setupCommunityInDb(db: Database, communityDid: string) {
       display_name: "Test Community",
       pds_host: "https://pds.example.com",
       app_password: "encrypted:test",
-      creator_did: ADMIN_DID,
     })
     .onConflict((oc) => oc.column("did").doNothing())
     .execute();
@@ -295,8 +315,12 @@ describe("Community membership status", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Re-wire restore to return our fake agent for each test
-    mockOAuthClient.restore.mockResolvedValue(fakeUserAgent);
+    // Re-wire restore to return a fake OAuth session for each test
+    mockOAuthClient.restore.mockResolvedValue({
+      getTokenInfo: vi.fn(async () => ({
+        scope: "atproto transition:generic",
+      })),
+    });
   });
 
   describe("GET /communities/:did - membershipStatus", () => {

@@ -1044,6 +1044,7 @@ export function createAuthRouter(
   router.get("/communities/:did", async (req: Request, res: Response) => {
     try {
       const agent = await getSessionAgent(req, res, oauthClient);
+      res.setHeader("cache-control", "no-store");
 
       const communityDid = decodeURIComponent(req.params.did);
 
@@ -1205,9 +1206,14 @@ export function createAuthRouter(
       const isMember =
         isAdmin ||
         proofsRecords.some((proof: any) => {
-          // Check if this proof matches the user's membership CID
           if (!userMembership) return false;
-          return proof.value.cid === userMembership.cid;
+          // Match by memberDid (primary) or CID (legacy).
+          // The approval flow writes cid: "" so CID-only matching
+          // would never confirm approved members.
+          return (
+            proof.value.memberDid === agent.assertDid ||
+            proof.value.cid === userMembership.cid
+          );
         });
 
       // Determine membership status: active, pending, or null.
