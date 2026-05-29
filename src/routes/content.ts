@@ -16,6 +16,7 @@ import {
   type Operation,
 } from "../services/permissions";
 import { logger } from "../lib/logger";
+import { resolveDocumentWebUrl } from "../lib/documentUrl";
 import { z } from "zod";
 
 type Session = { did?: string };
@@ -471,6 +472,18 @@ export function createContentRouter(
         ...nativeEvents.map(attachHandle),
       ];
 
+      // Resolve canonical web URLs for document records via their
+      // site.standard.publication, so the client doesn't have to guess the URL
+      // from the author's handle (which is wrong for Leaflet and other
+      // standard.site publications hosted on their own domain).
+      await Promise.all(
+        enrichedRecords.map(async (r) => {
+          if (r.type !== "document" || !r.documentUri) return;
+          const url = await resolveDocumentWebUrl(r.documentUri);
+          if (url) r.url = url;
+        }),
+      );
+
       res.json({
         records: enrichedRecords,
         cursor: response.data.cursor,
@@ -534,11 +547,9 @@ export function createContentRouter(
       } while (cursor && !isDuplicate);
 
       if (isDuplicate) {
-        return res
-          .status(409)
-          .json({
-            error: "This content has already been shared with this community",
-          });
+        return res.status(409).json({
+          error: "This content has already been shared with this community",
+        });
       }
 
       // Build event-specific fields if type=event
@@ -741,11 +752,9 @@ export function createContentRouter(
         [SHARED_DOCUMENT_COLLECTION, SHARED_CONTENT_COLLECTION],
       );
       if (duplicate) {
-        return res
-          .status(409)
-          .json({
-            error: "This document has already been shared with this community",
-          });
+        return res.status(409).json({
+          error: "This document has already been shared with this community",
+        });
       }
 
       const response = await communityAgent.api.com.atproto.repo.createRecord({
@@ -835,11 +844,9 @@ export function createContentRouter(
         [SHARED_EVENT_COLLECTION, SHARED_CONTENT_COLLECTION],
       );
       if (duplicate) {
-        return res
-          .status(409)
-          .json({
-            error: "This event has already been shared with this community",
-          });
+        return res.status(409).json({
+          error: "This event has already been shared with this community",
+        });
       }
 
       const eventFields: Record<string, string> = {};
