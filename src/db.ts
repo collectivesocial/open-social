@@ -1,6 +1,6 @@
-import { Generated, Kysely, PostgresDialect, sql } from 'kysely';
-import { Pool } from 'pg';
-import type { AuthState, AuthSession } from './models/auth';
+import { Generated, Kysely, PostgresDialect, sql } from "kysely";
+import { Pool } from "pg";
+import type { AuthState, AuthSession } from "./models/auth";
 
 export interface Community {
   did: string;
@@ -24,7 +24,7 @@ export interface App {
   domain: string;
   creator_did: string;
   api_key: string;
-  auth_method: 'api_key' | 'http_signature' | 'both';
+  auth_method: "api_key" | "http_signature" | "both";
   cimd_url: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
@@ -222,6 +222,24 @@ export interface StreamToken {
   created_at: Generated<Date>;
 }
 
+/**
+ * Permissioned spaces provisioned for a community.
+ *
+ * Maps a community to the AT Protocol permissioned space (com.atproto.space.*)
+ * that holds a given kind of data — `management` (governance + membership +
+ * hierarchy) or `content` (shared content + community documents). One row per
+ * (community_did, kind). See `services/spaces.ts`.
+ */
+export interface CommunitySpace {
+  id: Generated<number>;
+  community_did: string;
+  /** 'management' | 'content' */
+  kind: string;
+  /** The space URI returned by com.atproto.space.createSpace. */
+  space_uri: string;
+  created_at: Generated<Date>;
+}
+
 // ─── Database type map ───────────────────────────────────────────────
 
 export interface Database {
@@ -243,6 +261,7 @@ export interface Database {
   did_cache: DidCacheEntry;
   event_log: EventLogEntry;
   stream_tokens: StreamToken;
+  community_spaces: CommunitySpace;
 }
 
 export function createDb(connectionString: string): Kysely<Database> {
