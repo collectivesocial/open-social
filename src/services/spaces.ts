@@ -25,12 +25,14 @@ import { logger } from "../lib/logger";
 /** Space type NSIDs. Declared as `type: space` lexicons for the PoC. */
 export const MANAGEMENT_SPACE_TYPE = "community.opensocial.management";
 export const CONTENT_SPACE_TYPE = "community.opensocial.content";
+export const POSTS_SPACE_TYPE = "community.opensocial.posts";
 
-export type SpaceKind = "management" | "content";
+export type SpaceKind = "management" | "content" | "posts";
 
 const SPACE_TYPE_BY_KIND: Record<SpaceKind, string> = {
   management: MANAGEMENT_SPACE_TYPE,
   content: CONTENT_SPACE_TYPE,
+  posts: POSTS_SPACE_TYPE,
 };
 
 export class SpaceXrpcError extends Error {
@@ -198,6 +200,34 @@ export class SpaceClient {
       },
     );
     return res ?? { records: [] };
+  }
+
+  /**
+   * listRecords + getRecord hydration. com.atproto.space.listRecords returns
+   * only {collection, rkey, cid} (no value), so fetch each record's value.
+   */
+  async listRecordValues<V = any>(
+    space: string,
+    collection: string,
+    repo: string = this.ownDid(),
+  ): Promise<Array<{ rkey: string; cid: string; value: V }>> {
+    const out: Array<{ rkey: string; cid: string; value: V }> = [];
+    let cursor: string | undefined;
+    do {
+      const { records, cursor: next } = await this.listRecords(
+        space,
+        collection,
+        { limit: 100, cursor },
+        repo,
+      );
+      for (const ref of records) {
+        const full = await this.getRecord<V>(space, collection, ref.rkey, repo);
+        if (full?.value)
+          out.push({ rkey: ref.rkey, cid: ref.cid, value: full.value });
+      }
+      cursor = next;
+    } while (cursor);
+    return out;
   }
 
   async deleteRecord(

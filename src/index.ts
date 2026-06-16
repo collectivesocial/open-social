@@ -19,6 +19,7 @@ import { createPermissionsRouter } from "./routes/permissions";
 import { createHierarchyRouter } from "./routes/hierarchy";
 import { createEventsRouter } from "./routes/events";
 import { createXrpcRouter } from "./xrpc/server";
+import { createPocRouter } from "./routes/poc";
 import { createRateLimiter } from "./middleware/rateLimit";
 import { csrfProtection } from "./middleware/csrf";
 import { logger } from "./lib/logger";
@@ -100,6 +101,14 @@ async function start() {
     const rateLimiter = createRateLimiter(db);
     app.use("/api/", rateLimiter);
     app.use("/xrpc/", rateLimiter);
+
+    // Dev-only PoC endpoints (no auth; acting DID passed explicitly). Mounted
+    // before csrfProtection so the experiment UI can call them without a session.
+    if (config.nodeEnv !== "production") {
+      app.use("/api/poc/communities", createPocRouter(db));
+      logger.info("Dev PoC router mounted at /api/poc/communities");
+    }
+
     app.use(csrfProtection);
 
     // Auth routes (OAuth)
