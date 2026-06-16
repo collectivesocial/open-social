@@ -28,6 +28,7 @@ import {
   writeMembershipProof,
   removeMembershipProof,
   listMembershipProofs,
+  hasMembershipProof,
 } from "../services/membership";
 import { createAuditLogService } from "../services/auditLog";
 import { createWebhookService } from "../services/webhook";
@@ -122,21 +123,12 @@ export function createMemberRouter(db: Kysely<Database>): Router {
         const communityAgent = await createCommunityAgent(db, communityDid);
 
         // Check if already a member
-        let cursor: string | undefined;
-        let alreadyMember = false;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor,
-            });
-          alreadyMember = response.data.records.some(
-            (r: any) => r.value.memberDid === userDid,
-          );
-          cursor = response.data.cursor;
-        } while (cursor && !alreadyMember);
+        const alreadyMember = await hasMembershipProof(
+          db,
+          communityDid,
+          userDid,
+          communityAgent,
+        );
 
         if (alreadyMember) {
           return res
