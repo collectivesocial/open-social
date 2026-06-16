@@ -24,6 +24,7 @@
     "seed:devenv": "bash -c 'set -a && source .env.devnet && exec tsx scripts/seed-devenv-community.ts'",
     "migrate:devenv": "bash -c 'set -a && source .env.devnet && exec tsx scripts/migrate.ts \"$@\"' --",
     "provision:spaces": "bash -c 'set -a && source .env.devnet && exec tsx scripts/provision-community-spaces.ts \"$@\"' --",
+    "demo:membership": "bash -c 'set -a && source .env.devnet && exec tsx scripts/demo-membership.ts \"$@\"' --",
     "test:devnet": "bash -c 'set -a && source .env.devnet && exec vitest run --config vitest.config.devnet.ts'",
     "test:integration": "vitest run test/integration/",
     "prepare": "husky"
