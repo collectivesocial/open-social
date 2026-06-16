@@ -57,6 +57,16 @@ export interface SpaceRecord<V = any> {
 }
 
 /**
+ * A listing entry from com.atproto.space.listRecords. Note it carries NO record
+ * value (unlike com.atproto.repo.listRecords) — fetch the value with getRecord.
+ */
+export interface SpaceRecordRef {
+  collection: string;
+  rkey: string;
+  cid: string;
+}
+
+/**
  * Thin authenticated client for com.atproto.space.* on a single community's
  * PDS. Construct via {@link getSpaceClient}.
  */
@@ -112,16 +122,29 @@ export class SpaceClient {
     })) as { uri: string };
   }
 
+  /**
+   * DID of the authenticated account (the community). com.atproto.space.*
+   * record methods all require a `repo` — the repo within the space to act on —
+   * which defaults to the community's own repo.
+   */
+  private ownDid(): string {
+    const did = (this.agent as any).session?.did as string | undefined;
+    if (!did) throw new Error("community agent has no active session");
+    return did;
+  }
+
   async createRecord(
     space: string,
     collection: string,
     record: Record<string, unknown>,
     rkey?: string,
+    repo: string = this.ownDid(),
   ): Promise<{ uri: string; cid: string }> {
     return (await this.call("com.atproto.space.createRecord", {
       method: "POST",
       body: {
         space,
+        repo,
         collection,
         ...(rkey ? { rkey } : {}),
         record,
@@ -135,10 +158,11 @@ export class SpaceClient {
     collection: string,
     rkey: string,
     record: Record<string, unknown>,
+    repo: string = this.ownDid(),
   ): Promise<{ uri: string; cid: string }> {
     return (await this.call("com.atproto.space.putRecord", {
       method: "POST",
-      body: { space, collection, rkey, record, validate: false },
+      body: { space, repo, collection, rkey, record, validate: false },
     })) as { uri: string; cid: string };
   }
 
@@ -146,23 +170,31 @@ export class SpaceClient {
     space: string,
     collection: string,
     rkey: string,
+    repo: string = this.ownDid(),
   ): Promise<SpaceRecord<V> | undefined> {
     return this.call<SpaceRecord<V>>("com.atproto.space.getRecord", {
       method: "GET",
-      params: { space, collection, rkey },
+      params: { space, repo, collection, rkey },
     });
   }
 
-  async listRecords<V = any>(
+  async listRecords(
     space: string,
     collection: string,
     opts: { limit?: number; cursor?: string } = {},
-  ): Promise<{ records: SpaceRecord<V>[]; cursor?: string }> {
-    const res = await this.call<{ records: SpaceRecord<V>[]; cursor?: string }>(
+    repo: string = this.ownDid(),
+  ): Promise<{ records: SpaceRecordRef[]; cursor?: string }> {
+    const res = await this.call<{ records: SpaceRecordRef[]; cursor?: string }>(
       "com.atproto.space.listRecords",
       {
         method: "GET",
-        params: { space, collection, limit: opts.limit, cursor: opts.cursor },
+        params: {
+          space,
+          repo,
+          collection,
+          limit: opts.limit,
+          cursor: opts.cursor,
+        },
       },
     );
     return res ?? { records: [] };
@@ -172,10 +204,11 @@ export class SpaceClient {
     space: string,
     collection: string,
     rkey: string,
+    repo: string = this.ownDid(),
   ): Promise<void> {
     await this.call("com.atproto.space.deleteRecord", {
       method: "POST",
-      body: { space, collection, rkey },
+      body: { space, repo, collection, rkey },
     });
   }
 

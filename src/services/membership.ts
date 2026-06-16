@@ -31,6 +31,38 @@ function rkeyOf(uri: string): string {
   return uri.split("/").pop()!;
 }
 
+/**
+ * Fetch every membership-proof record from a permissioned space as
+ * `{ rkey, value }`. com.atproto.space.listRecords returns only metadata
+ * (collection/rkey/cid) with no value, so each rkey is hydrated via getRecord.
+ */
+async function listSpaceProofs(
+  db: Kysely<Database>,
+  communityDid: string,
+  space: string,
+): Promise<Array<{ rkey: string; value: ProofValue }>> {
+  const client = await getSpaceClient(db, communityDid);
+  const out: Array<{ rkey: string; value: ProofValue }> = [];
+  let cursor: string | undefined;
+  do {
+    const { records, cursor: next } = await client.listRecords(
+      space,
+      MEMBERSHIP_PROOF,
+      { limit: 100, cursor },
+    );
+    for (const ref of records) {
+      const full = await client.getRecord<ProofValue>(
+        space,
+        MEMBERSHIP_PROOF,
+        ref.rkey,
+      );
+      if (full?.value) out.push({ rkey: ref.rkey, value: full.value });
+    }
+    cursor = next;
+  } while (cursor);
+  return out;
+}
+
 /** Whether `memberDid` has a membership proof in `communityDid`. */
 export async function hasMembershipProof(
   db: Kysely<Database>,
@@ -40,18 +72,8 @@ export async function hasMembershipProof(
 ): Promise<boolean> {
   const space = await getCommunitySpace(db, communityDid, "management");
   if (space) {
-    const client = await getSpaceClient(db, communityDid);
-    let cursor: string | undefined;
-    do {
-      const { records, cursor: next } = await client.listRecords<ProofValue>(
-        space,
-        MEMBERSHIP_PROOF,
-        { limit: 100, cursor },
-      );
-      if (records.some((r) => r.value.memberDid === memberDid)) return true;
-      cursor = next;
-    } while (cursor);
-    return false;
+    const proofs = await listSpaceProofs(db, communityDid, space);
+    return proofs.some((p) => p.value.memberDid === memberDid);
   }
 
   // Legacy: proofs live in the community account's repo.
@@ -88,18 +110,8 @@ export async function listMembershipProofs(
 
   const space = await getCommunitySpace(db, communityDid, "management");
   if (space) {
-    const client = await getSpaceClient(db, communityDid);
-    let cursor: string | undefined;
-    do {
-      const { records, cursor: next } = await client.listRecords<ProofValue>(
-        space,
-        MEMBERSHIP_PROOF,
-        { limit: 100, cursor },
-      );
-      out.push(...records.map((r) => ({ uri: r.uri, value: r.value })));
-      cursor = next;
-    } while (cursor && out.length < max);
-    return out;
+    const proofs = await listSpaceProofs(db, communityDid, space);
+    return proofs.slice(0, max).map((p) => ({ uri: p.rkey, value: p.value }));
   }
 
   const agent = await createCommunityAgent(db, communityDid);
@@ -158,22 +170,12 @@ export async function removeMembershipProof(
 ): Promise<boolean> {
   const space = await getCommunitySpace(db, communityDid, "management");
   if (space) {
+    const proofs = await listSpaceProofs(db, communityDid, space);
+    const match = proofs.find((p) => p.value.memberDid === memberDid);
+    if (!match) return false;
     const client = await getSpaceClient(db, communityDid);
-    let cursor: string | undefined;
-    do {
-      const { records, cursor: next } = await client.listRecords<ProofValue>(
-        space,
-        MEMBERSHIP_PROOF,
-        { limit: 100, cursor },
-      );
-      const match = records.find((r) => r.value.memberDid === memberDid);
-      if (match) {
-        await client.deleteRecord(space, MEMBERSHIP_PROOF, rkeyOf(match.uri));
-        return true;
-      }
-      cursor = next;
-    } while (cursor);
-    return false;
+    await client.deleteRecord(space, MEMBERSHIP_PROOF, match.rkey);
+    return true;
   }
 
   const agent = await createCommunityAgent(db, communityDid);
