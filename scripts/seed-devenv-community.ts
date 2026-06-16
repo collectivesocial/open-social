@@ -26,8 +26,10 @@ import { createDb } from "../src/db";
 import { encrypt } from "../src/lib/crypto";
 import { config } from "../src/config";
 
-const COMMUNITY_HANDLE = process.env.COMMUNITY_HANDLE || "community.test";
-const MEMBER_HANDLE = process.env.MEMBER_HANDLE || "member.test";
+// First label must be 3-18 chars and not a reserved subdomain (the PDS reserves
+// "community", "member", etc.), so use non-reserved handles by default.
+const COMMUNITY_HANDLE = process.env.COMMUNITY_HANDLE || "democommunity.test";
+const MEMBER_HANDLE = process.env.MEMBER_HANDLE || "testmember.test";
 const COMMUNITY_PASSWORD = "community-devenv-pass";
 const MEMBER_PASSWORD = "member-devenv-pass";
 
