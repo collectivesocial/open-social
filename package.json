@@ -22,6 +22,7 @@
     "dev:devnet": "bash -c 'set -a && source .env.devnet && exec tsx watch src/index.ts'",
     "seed:devnet": "bash -c 'set -a && source .env.devnet && exec tsx scripts/seed-devnet-community.ts'",
     "seed:devenv": "bash -c 'set -a && source .env.devnet && exec tsx scripts/seed-devenv-community.ts'",
+    "migrate:devenv": "bash -c 'set -a && source .env.devnet && exec tsx scripts/migrate.ts \"$@\"' --",
     "provision:spaces": "bash -c 'set -a && source .env.devnet && exec tsx scripts/provision-community-spaces.ts \"$@\"' --",
     "test:devnet": "bash -c 'set -a && source .env.devnet && exec vitest run --config vitest.config.devnet.ts'",
     "test:integration": "vitest run test/integration/",
