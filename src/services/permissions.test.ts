@@ -3,7 +3,7 @@
  * Tests permission checking, role resolution, and visibility logic
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   checkAppVisibility,
   getRequiredRole,
@@ -14,16 +14,16 @@ import {
   seedCollectionPermissions,
   ROLE_ADMIN,
   ROLE_MEMBER,
-} from '../services/permissions';
-import { createMockDb, createMockAgent, createFakeDid } from '../test/helpers';
-import { adminCache, memberCache, memberRolesCache } from '../lib/cache';
-import type { Kysely } from 'kysely';
-import type { Database } from '../db';
+} from "../services/permissions";
+import { createMockDb, createMockAgent, createFakeDid } from "../test/helpers";
+import { adminCache, memberCache, memberRolesCache } from "../lib/cache";
+import type { Kysely } from "kysely";
+import type { Database } from "../db";
 
-describe('permissions.ts', () => {
+describe("permissions.ts", () => {
   let db: Kysely<Database>;
   const communityDid = createFakeDid();
-  const appId = 'test-app-123';
+  const appId = "test-app-123";
   const userDid = createFakeDid();
 
   beforeEach(() => {
@@ -35,13 +35,15 @@ describe('permissions.ts', () => {
     memberRolesCache.clear();
   });
 
-  describe('checkAppVisibility', () => {
-    it('should allow app when explicit override is enabled', async () => {
+  describe("checkAppVisibility", () => {
+    it("should allow app when explicit override is enabled", async () => {
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
-              executeTakeFirst: vi.fn().mockResolvedValue({ status: 'enabled' }),
+              executeTakeFirst: vi
+                .fn()
+                .mockResolvedValue({ status: "enabled" }),
             }),
           }),
         }),
@@ -54,12 +56,14 @@ describe('permissions.ts', () => {
       expect(result).toEqual({ allowed: true });
     });
 
-    it('should block app when explicit override is disabled', async () => {
+    it("should block app when explicit override is disabled", async () => {
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
-              executeTakeFirst: vi.fn().mockResolvedValue({ status: 'disabled' }),
+              executeTakeFirst: vi
+                .fn()
+                .mockResolvedValue({ status: "disabled" }),
             }),
           }),
         }),
@@ -71,11 +75,11 @@ describe('permissions.ts', () => {
 
       expect(result).toEqual({
         allowed: false,
-        reason: 'App is disabled for this community',
+        reason: "App is disabled for this community",
       });
     });
 
-    it('should block app when in community blocked list', async () => {
+    it("should block app when in community blocked list", async () => {
       let callCount = 0;
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
@@ -83,7 +87,9 @@ describe('permissions.ts', () => {
             where: vi.fn().mockReturnValue({
               executeTakeFirst: vi.fn().mockImplementation(async () => {
                 callCount++;
-                return callCount === 1 ? undefined : { blocked_app_ids: JSON.stringify([appId]) };
+                return callCount === 1
+                  ? undefined
+                  : { blocked_app_ids: JSON.stringify([appId]) };
               }),
             }),
           }),
@@ -92,7 +98,7 @@ describe('permissions.ts', () => {
           where: vi.fn().mockReturnValue({
             executeTakeFirst: vi.fn().mockResolvedValue({
               blocked_app_ids: JSON.stringify([appId]),
-              app_visibility_default: 'open',
+              app_visibility_default: "open",
             }),
           }),
         }),
@@ -104,11 +110,11 @@ describe('permissions.ts', () => {
 
       expect(result).toEqual({
         allowed: false,
-        reason: 'App is blocked by this community',
+        reason: "App is blocked by this community",
       });
     });
 
-    it('should block app when community requires approval', async () => {
+    it("should block app when community requires approval", async () => {
       let callCount = 0;
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
@@ -124,8 +130,8 @@ describe('permissions.ts', () => {
         selectAll: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             executeTakeFirst: vi.fn().mockResolvedValue({
-              blocked_app_ids: '[]',
-              app_visibility_default: 'approval_required',
+              blocked_app_ids: "[]",
+              app_visibility_default: "approval_required",
             }),
           }),
         }),
@@ -137,11 +143,11 @@ describe('permissions.ts', () => {
 
       expect(result).toEqual({
         allowed: false,
-        reason: 'Community requires admin approval for apps',
+        reason: "Community requires admin approval for apps",
       });
     });
 
-    it('should allow app when settings default is open', async () => {
+    it("should allow app when settings default is open", async () => {
       let callCount = 0;
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
@@ -157,8 +163,8 @@ describe('permissions.ts', () => {
         selectAll: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             executeTakeFirst: vi.fn().mockResolvedValue({
-              blocked_app_ids: '[]',
-              app_visibility_default: 'open',
+              blocked_app_ids: "[]",
+              app_visibility_default: "open",
             }),
           }),
         }),
@@ -171,7 +177,7 @@ describe('permissions.ts', () => {
       expect(result).toEqual({ allowed: true });
     });
 
-    it('should default to open when no settings exist', async () => {
+    it("should default to open when no settings exist", async () => {
       let callCount = 0;
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
@@ -198,7 +204,7 @@ describe('permissions.ts', () => {
       expect(result).toEqual({ allowed: true });
     });
 
-    it('should handle malformed JSON in blocked_app_ids', async () => {
+    it("should handle malformed JSON in blocked_app_ids", async () => {
       let callCount = 0;
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
@@ -214,8 +220,8 @@ describe('permissions.ts', () => {
         selectAll: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             executeTakeFirst: vi.fn().mockResolvedValue({
-              blocked_app_ids: 'invalid-json',
-              app_visibility_default: 'open',
+              blocked_app_ids: "invalid-json",
+              app_visibility_default: "open",
             }),
           }),
         }),
@@ -229,14 +235,16 @@ describe('permissions.ts', () => {
     });
   });
 
-  describe('getRequiredRole', () => {
-    it('should return required role for operation', async () => {
+  describe("getRequiredRole", () => {
+    it("should return required role for operation", async () => {
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnValue({
-                executeTakeFirst: vi.fn().mockResolvedValue({ can_create: 'member' }),
+                executeTakeFirst: vi
+                  .fn()
+                  .mockResolvedValue({ can_create: "member" }),
               }),
             }),
           }),
@@ -245,12 +253,18 @@ describe('permissions.ts', () => {
 
       db.selectFrom = selectFrom;
 
-      const result = await getRequiredRole(db, communityDid, appId, 'test.collection', 'create');
+      const result = await getRequiredRole(
+        db,
+        communityDid,
+        appId,
+        "test.collection",
+        "create",
+      );
 
-      expect(result).toBe('member');
+      expect(result).toBe("member");
     });
 
-    it('should return null when no permission row exists', async () => {
+    it("should return null when no permission row exists", async () => {
       const selectFrom = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -265,13 +279,19 @@ describe('permissions.ts', () => {
 
       db.selectFrom = selectFrom;
 
-      const result = await getRequiredRole(db, communityDid, appId, 'test.collection', 'create');
+      const result = await getRequiredRole(
+        db,
+        communityDid,
+        appId,
+        "test.collection",
+        "create",
+      );
 
       expect(result).toBeNull();
     });
 
-    it('should work with all CRUD operations', async () => {
-      const operations = ['create', 'read', 'update', 'delete'] as const;
+    it("should work with all CRUD operations", async () => {
+      const operations = ["create", "read", "update", "delete"] as const;
 
       for (const op of operations) {
         const selectFrom = vi.fn().mockReturnValue({
@@ -279,7 +299,9 @@ describe('permissions.ts', () => {
             where: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnValue({
                 where: vi.fn().mockReturnValue({
-                  executeTakeFirst: vi.fn().mockResolvedValue({ [`can_${op}`]: 'admin' }),
+                  executeTakeFirst: vi
+                    .fn()
+                    .mockResolvedValue({ [`can_${op}`]: "admin" }),
                 }),
               }),
             }),
@@ -288,15 +310,21 @@ describe('permissions.ts', () => {
 
         db.selectFrom = selectFrom;
 
-        const result = await getRequiredRole(db, communityDid, appId, 'test.collection', op);
+        const result = await getRequiredRole(
+          db,
+          communityDid,
+          appId,
+          "test.collection",
+          op,
+        );
 
-        expect(result).toBe('admin');
+        expect(result).toBe("admin");
       }
     });
   });
 
-  describe('getUserRoles', () => {
-    it('should return member role when user is a member', async () => {
+  describe("getUserRoles", () => {
+    it("should return member role when user is a member", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -310,6 +338,8 @@ describe('permissions.ts', () => {
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
               execute: vi.fn().mockResolvedValue([]),
+              // community_spaces lookup (getCommunitySpace) → no space → repo fallback
+              executeTakeFirst: vi.fn().mockResolvedValue(undefined),
             }),
           }),
         }),
@@ -323,7 +353,7 @@ describe('permissions.ts', () => {
       expect(roles).not.toContain(ROLE_ADMIN);
     });
 
-    it('should return admin role when user is an admin', async () => {
+    it("should return admin role when user is an admin", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -340,6 +370,8 @@ describe('permissions.ts', () => {
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
               execute: vi.fn().mockResolvedValue([]),
+              // community_spaces lookup (getCommunitySpace) → no space → repo fallback
+              executeTakeFirst: vi.fn().mockResolvedValue(undefined),
             }),
           }),
         }),
@@ -353,7 +385,7 @@ describe('permissions.ts', () => {
       expect(roles).toContain(ROLE_ADMIN);
     });
 
-    it('should include custom roles from database', async () => {
+    it("should include custom roles from database", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -366,10 +398,14 @@ describe('permissions.ts', () => {
         select: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
-              execute: vi.fn().mockResolvedValue([
-                { role_name: 'moderator' },
-                { role_name: 'contributor' },
-              ]),
+              execute: vi
+                .fn()
+                .mockResolvedValue([
+                  { role_name: "moderator" },
+                  { role_name: "contributor" },
+                ]),
+              // community_spaces lookup (getCommunitySpace) → no space → repo fallback
+              executeTakeFirst: vi.fn().mockResolvedValue(undefined),
             }),
           }),
         }),
@@ -380,11 +416,11 @@ describe('permissions.ts', () => {
       const roles = await getUserRoles(db, communityDid, userDid, agent);
 
       expect(roles).toContain(ROLE_MEMBER);
-      expect(roles).toContain('moderator');
-      expect(roles).toContain('contributor');
+      expect(roles).toContain("moderator");
+      expect(roles).toContain("contributor");
     });
 
-    it('should use cache on subsequent calls', async () => {
+    it("should use cache on subsequent calls", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -398,6 +434,8 @@ describe('permissions.ts', () => {
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
               execute: vi.fn().mockResolvedValue([]),
+              // community_spaces lookup (getCommunitySpace) → no space → repo fallback
+              executeTakeFirst: vi.fn().mockResolvedValue(undefined),
             }),
           }),
         }),
@@ -415,7 +453,7 @@ describe('permissions.ts', () => {
       expect(agent.api.com.atproto.repo.listRecords).toHaveBeenCalledTimes(1);
     });
 
-    it('should return empty array when user is not a member', async () => {
+    it("should return empty array when user is not a member", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -429,6 +467,8 @@ describe('permissions.ts', () => {
           where: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
               execute: vi.fn().mockResolvedValue([]),
+              // community_spaces lookup (getCommunitySpace) → no space → repo fallback
+              executeTakeFirst: vi.fn().mockResolvedValue(undefined),
             }),
           }),
         }),
@@ -442,42 +482,42 @@ describe('permissions.ts', () => {
     });
   });
 
-  describe('satisfiesRole', () => {
-    it('should allow admin to satisfy any role', () => {
+  describe("satisfiesRole", () => {
+    it("should allow admin to satisfy any role", () => {
       expect(satisfiesRole([ROLE_ADMIN], ROLE_MEMBER)).toBe(true);
       expect(satisfiesRole([ROLE_ADMIN], ROLE_ADMIN)).toBe(true);
-      expect(satisfiesRole([ROLE_ADMIN], 'custom-role')).toBe(true);
+      expect(satisfiesRole([ROLE_ADMIN], "custom-role")).toBe(true);
     });
 
-    it('should allow member to satisfy member role', () => {
+    it("should allow member to satisfy member role", () => {
       expect(satisfiesRole([ROLE_MEMBER], ROLE_MEMBER)).toBe(true);
     });
 
-    it('should not allow member to satisfy admin role', () => {
+    it("should not allow member to satisfy admin role", () => {
       expect(satisfiesRole([ROLE_MEMBER], ROLE_ADMIN)).toBe(false);
     });
 
-    it('should require exact match for custom roles', () => {
-      expect(satisfiesRole(['moderator'], 'moderator')).toBe(true);
-      expect(satisfiesRole(['moderator'], 'contributor')).toBe(false);
+    it("should require exact match for custom roles", () => {
+      expect(satisfiesRole(["moderator"], "moderator")).toBe(true);
+      expect(satisfiesRole(["moderator"], "contributor")).toBe(false);
     });
 
-    it('should allow admin to satisfy custom roles', () => {
-      expect(satisfiesRole([ROLE_ADMIN, ROLE_MEMBER], 'moderator')).toBe(true);
+    it("should allow admin to satisfy custom roles", () => {
+      expect(satisfiesRole([ROLE_ADMIN, ROLE_MEMBER], "moderator")).toBe(true);
     });
 
-    it('should handle multiple user roles', () => {
-      const userRoles = [ROLE_MEMBER, 'moderator', 'contributor'];
+    it("should handle multiple user roles", () => {
+      const userRoles = [ROLE_MEMBER, "moderator", "contributor"];
 
       expect(satisfiesRole(userRoles, ROLE_MEMBER)).toBe(true);
-      expect(satisfiesRole(userRoles, 'moderator')).toBe(true);
-      expect(satisfiesRole(userRoles, 'contributor')).toBe(true);
-      expect(satisfiesRole(userRoles, 'editor')).toBe(false);
+      expect(satisfiesRole(userRoles, "moderator")).toBe(true);
+      expect(satisfiesRole(userRoles, "contributor")).toBe(true);
+      expect(satisfiesRole(userRoles, "editor")).toBe(false);
     });
   });
 
-  describe('checkMembership', () => {
-    it('should return true when user is found in membership records', async () => {
+  describe("checkMembership", () => {
+    it("should return true when user is found in membership records", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -491,7 +531,7 @@ describe('permissions.ts', () => {
       expect(result).toBe(true);
     });
 
-    it('should return false when user is not found in membership records', async () => {
+    it("should return false when user is not found in membership records", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -505,7 +545,7 @@ describe('permissions.ts', () => {
       expect(result).toBe(false);
     });
 
-    it('should use cache on subsequent calls', async () => {
+    it("should use cache on subsequent calls", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords.mockResolvedValue({
         data: {
@@ -525,13 +565,13 @@ describe('permissions.ts', () => {
       expect(agent.api.com.atproto.repo.listRecords).toHaveBeenCalledTimes(1);
     });
 
-    it('should handle pagination when searching for member', async () => {
+    it("should handle pagination when searching for member", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.listRecords
         .mockResolvedValueOnce({
           data: {
-            records: [{ value: { memberDid: 'did:plc:other1' } }],
-            cursor: 'cursor1',
+            records: [{ value: { memberDid: "did:plc:other1" } }],
+            cursor: "cursor1",
           },
         })
         .mockResolvedValueOnce({
@@ -548,8 +588,8 @@ describe('permissions.ts', () => {
     });
   });
 
-  describe('checkAdmin', () => {
-    it('should return true when user is in admins list', async () => {
+  describe("checkAdmin", () => {
+    it("should return true when user is in admins list", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.getRecord.mockResolvedValue({
         data: { value: { admins: [userDid] } },
@@ -560,10 +600,10 @@ describe('permissions.ts', () => {
       expect(result).toBe(true);
     });
 
-    it('should return false when user is not in admins list', async () => {
+    it("should return false when user is not in admins list", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.getRecord.mockResolvedValue({
-        data: { value: { admins: ['did:plc:other1', 'did:plc:other2'] } },
+        data: { value: { admins: ["did:plc:other1", "did:plc:other2"] } },
       });
 
       const result = await checkAdmin(agent, communityDid, userDid);
@@ -571,16 +611,18 @@ describe('permissions.ts', () => {
       expect(result).toBe(false);
     });
 
-    it('should return false when getRecord fails', async () => {
+    it("should return false when getRecord fails", async () => {
       const agent = createMockAgent();
-      agent.api.com.atproto.repo.getRecord.mockRejectedValue(new Error('Not found'));
+      agent.api.com.atproto.repo.getRecord.mockRejectedValue(
+        new Error("Not found"),
+      );
 
       const result = await checkAdmin(agent, communityDid, userDid);
 
       expect(result).toBe(false);
     });
 
-    it('should use cache on subsequent calls', async () => {
+    it("should use cache on subsequent calls", async () => {
       const agent = createMockAgent();
       agent.api.com.atproto.repo.getRecord.mockResolvedValue({
         data: { value: { admins: [userDid] } },
@@ -598,16 +640,16 @@ describe('permissions.ts', () => {
     });
   });
 
-  describe('seedCollectionPermissions', () => {
-    it('should copy app default permissions to community', async () => {
+  describe("seedCollectionPermissions", () => {
+    it("should copy app default permissions to community", async () => {
       const defaults = [
         {
           app_id: appId,
-          collection: 'test.post',
-          default_can_create: 'member',
-          default_can_read: 'member',
-          default_can_update: 'admin',
-          default_can_delete: 'admin',
+          collection: "test.post",
+          default_can_create: "member",
+          default_can_read: "member",
+          default_can_update: "admin",
+          default_can_delete: "admin",
         },
       ];
 
@@ -642,18 +684,20 @@ describe('permissions.ts', () => {
 
       await seedCollectionPermissions(db, communityDid, appId);
 
-      expect(insertInto).toHaveBeenCalledWith('community_app_collection_permissions');
+      expect(insertInto).toHaveBeenCalledWith(
+        "community_app_collection_permissions",
+      );
     });
 
-    it('should not overwrite existing permission overrides', async () => {
+    it("should not overwrite existing permission overrides", async () => {
       const defaults = [
         {
           app_id: appId,
-          collection: 'test.post',
-          default_can_create: 'member',
-          default_can_read: 'member',
-          default_can_update: 'admin',
-          default_can_delete: 'admin',
+          collection: "test.post",
+          default_can_create: "member",
+          default_can_read: "member",
+          default_can_update: "admin",
+          default_can_delete: "admin",
         },
       ];
 

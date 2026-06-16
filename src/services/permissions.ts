@@ -6,15 +6,16 @@
  * thin in-memory cache for admin / membership status fetched from the PDS).
  */
 
-import type { Kysely } from 'kysely';
-import type { Database } from '../db';
-import { isAdminInList } from '../lib/adminUtils';
-import { adminCache, memberCache, memberRolesCache } from '../lib/cache';
+import type { Kysely } from "kysely";
+import type { Database } from "../db";
+import { isAdminInList } from "../lib/adminUtils";
+import { adminCache, memberCache, memberRolesCache } from "../lib/cache";
+import { hasMembershipProof } from "./membership";
 
 // ─── Built-in role names ──────────────────────────────────────────────
 
-export const ROLE_ADMIN = 'admin';
-export const ROLE_MEMBER = 'member';
+export const ROLE_ADMIN = "admin";
+export const ROLE_MEMBER = "member";
 
 /** Ordered from most to least privileged — used for "minimum role" checks. */
 const BUILT_IN_ROLE_HIERARCHY: readonly string[] = [ROLE_ADMIN, ROLE_MEMBER];
@@ -42,22 +43,25 @@ export async function checkAppVisibility(
 ): Promise<VisibilityResult> {
   // 1. Explicit override?
   const override = await db
-    .selectFrom('community_app_visibility')
-    .select('status')
-    .where('community_did', '=', communityDid)
-    .where('app_id', '=', appId)
+    .selectFrom("community_app_visibility")
+    .select("status")
+    .where("community_did", "=", communityDid)
+    .where("app_id", "=", appId)
     .executeTakeFirst();
 
   if (override) {
-    if (override.status === 'enabled') return { allowed: true };
-    return { allowed: false, reason: `App is ${override.status} for this community` };
+    if (override.status === "enabled") return { allowed: true };
+    return {
+      allowed: false,
+      reason: `App is ${override.status} for this community`,
+    };
   }
 
   // 2 & 3. Community-level settings
   const settings = await db
-    .selectFrom('community_settings')
+    .selectFrom("community_settings")
     .selectAll()
-    .where('community_did', '=', communityDid)
+    .where("community_did", "=", communityDid)
     .executeTakeFirst();
 
   if (settings) {
@@ -65,12 +69,17 @@ export async function checkAppVisibility(
     try {
       const blocked: string[] = JSON.parse(settings.blocked_app_ids);
       if (blocked.includes(appId)) {
-        return { allowed: false, reason: 'App is blocked by this community' };
+        return { allowed: false, reason: "App is blocked by this community" };
       }
-    } catch { /* malformed JSON — treat as empty */ }
+    } catch {
+      /* malformed JSON — treat as empty */
+    }
 
-    if (settings.app_visibility_default === 'approval_required') {
-      return { allowed: false, reason: 'Community requires admin approval for apps' };
+    if (settings.app_visibility_default === "approval_required") {
+      return {
+        allowed: false,
+        reason: "Community requires admin approval for apps",
+      };
     }
   }
 
@@ -80,7 +89,7 @@ export async function checkAppVisibility(
 
 // ─── Collection permissions ───────────────────────────────────────────
 
-export type Operation = 'create' | 'read' | 'update' | 'delete';
+export type Operation = "create" | "read" | "update" | "delete";
 
 /**
  * Get the minimum required role for a given (community, app, collection, operation).
@@ -98,11 +107,11 @@ export async function getRequiredRole(
   const col = `can_${operation}` as const;
 
   const row = await db
-    .selectFrom('community_app_collection_permissions')
+    .selectFrom("community_app_collection_permissions")
     .select(col)
-    .where('community_did', '=', communityDid)
-    .where('app_id', '=', appId)
-    .where('collection', '=', collection)
+    .where("community_did", "=", communityDid)
+    .where("app_id", "=", appId)
+    .where("collection", "=", collection)
     .executeTakeFirst();
 
   if (!row) return null; // no permission row → not accessible
@@ -131,8 +140,13 @@ export async function getUserRoles(
 
   const roles: string[] = [];
 
-  // Check membership (PDS)
-  const isMem = await checkMembership(communityAgent, communityDid, userDid);
+  // Check membership (management space when provisioned, else legacy repo)
+  const isMem = await hasMembershipProof(
+    db,
+    communityDid,
+    userDid,
+    communityAgent,
+  );
   if (isMem) roles.push(ROLE_MEMBER);
 
   // Check admin (PDS)
@@ -141,10 +155,10 @@ export async function getUserRoles(
 
   // Custom roles from database
   const customRoles = await db
-    .selectFrom('community_member_roles')
-    .select('role_name')
-    .where('community_did', '=', communityDid)
-    .where('member_did', '=', userDid)
+    .selectFrom("community_member_roles")
+    .select("role_name")
+    .where("community_did", "=", communityDid)
+    .where("member_did", "=", userDid)
     .execute();
 
   for (const r of customRoles) {
@@ -164,7 +178,10 @@ export async function getUserRoles(
  * - 'member' is satisfied if user has 'member' or 'admin'.
  * - A custom role name is satisfied if user has that exact role, OR 'admin'.
  */
-export function satisfiesRole(userRoles: string[], requiredRole: string): boolean {
+export function satisfiesRole(
+  userRoles: string[],
+  requiredRole: string,
+): boolean {
   // Admin can do anything
   if (userRoles.includes(ROLE_ADMIN)) return true;
 
@@ -198,7 +215,7 @@ export async function checkMembership(
   do {
     const response = await communityAgent.api.com.atproto.repo.listRecords({
       repo: communityDid,
-      collection: 'community.opensocial.membershipProof',
+      collection: "community.opensocial.membershipProof",
       limit: 100,
       cursor,
     });
@@ -224,8 +241,8 @@ export async function checkAdmin(
   try {
     const adminsResponse = await communityAgent.api.com.atproto.repo.getRecord({
       repo: communityDid,
-      collection: 'community.opensocial.admins',
-      rkey: 'self',
+      collection: "community.opensocial.admins",
+      rkey: "self",
     });
     const admins = (adminsResponse.data.value as any).admins || [];
     const result = isAdminInList(userDid, admins);
@@ -250,24 +267,24 @@ export async function seedCollectionPermissions(
   appId: string,
 ): Promise<void> {
   const defaults = await db
-    .selectFrom('app_default_permissions')
+    .selectFrom("app_default_permissions")
     .selectAll()
-    .where('app_id', '=', appId)
+    .where("app_id", "=", appId)
     .execute();
 
   for (const d of defaults) {
     // Only insert if no override exists yet
     const existing = await db
-      .selectFrom('community_app_collection_permissions')
-      .select('id')
-      .where('community_did', '=', communityDid)
-      .where('app_id', '=', appId)
-      .where('collection', '=', d.collection)
+      .selectFrom("community_app_collection_permissions")
+      .select("id")
+      .where("community_did", "=", communityDid)
+      .where("app_id", "=", appId)
+      .where("collection", "=", d.collection)
       .executeTakeFirst();
 
     if (!existing) {
       await db
-        .insertInto('community_app_collection_permissions')
+        .insertInto("community_app_collection_permissions")
         .values({
           community_did: communityDid,
           app_id: appId,

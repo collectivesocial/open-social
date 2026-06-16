@@ -24,6 +24,11 @@ import {
   normalizeAdmins,
 } from "../lib/adminUtils";
 import { createCommunityAgent } from "../services/atproto";
+import {
+  writeMembershipProof,
+  removeMembershipProof,
+  listMembershipProofs,
+} from "../services/membership";
 import { createAuditLogService } from "../services/auditLog";
 import { createWebhookService } from "../services/webhook";
 import { config } from "../config";
@@ -38,9 +43,7 @@ import { logWarning } from "../lib/errors";
  * Resolve a Bluesky profile to get handle, display name, and avatar.
  * Falls back gracefully if the user's PDS is unreachable.
  */
-async function resolveProfile(
-  did: string,
-): Promise<{
+async function resolveProfile(did: string): Promise<{
   handle: string | null;
   displayName: string | null;
   avatar: string | null;
@@ -179,16 +182,12 @@ export function createMemberRouter(db: Kysely<Database>): Router {
         }
 
         // Open community — create membershipProof immediately
-        await communityAgent.api.com.atproto.repo.createRecord({
-          repo: communityDid,
-          collection: "community.opensocial.membershipProof",
-          record: {
-            $type: "community.opensocial.membershipProof",
-            memberDid: userDid,
-            cid: membershipCid || "",
-            confirmedAt: new Date().toISOString(),
-          },
-        });
+        await writeMembershipProof(
+          db,
+          communityDid,
+          userDid,
+          membershipCid || "",
+        );
 
         await auditLog.log({
           communityDid,
@@ -289,34 +288,12 @@ export function createMemberRouter(db: Kysely<Database>): Router {
         }
 
         // Find and delete the membershipProof
-        let memberCursor: string | undefined;
-        let proofRecord: any = null;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor: memberCursor,
-            });
-          proofRecord = response.data.records.find(
-            (r: any) => r.value.memberDid === userDid,
-          );
-          memberCursor = response.data.cursor;
-        } while (memberCursor && !proofRecord);
-
-        if (!proofRecord) {
+        const removed = await removeMembershipProof(db, communityDid, userDid);
+        if (!removed) {
           return res
             .status(404)
             .json({ error: "Not a member of this community" });
         }
-
-        const rkey = proofRecord.uri.split("/").pop()!;
-        await communityAgent.api.com.atproto.repo.deleteRecord({
-          repo: communityDid,
-          collection: "community.opensocial.membershipProof",
-          rkey,
-        });
 
         await webhooks.dispatch("member.left", communityDid, {
           communityDid,
@@ -395,23 +372,11 @@ export function createMemberRouter(db: Kysely<Database>): Router {
         // Don't load all members into memory - fetch enough to satisfy pagination + buffer
         const offset = cursor ? decodeCursor(cursor) : 0;
         const maxFetch = Math.min(offset + limit * 3, 1000); // Cap at 1000 members
-        let atCursor: string | undefined;
-        const allProofs: any[] = [];
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor: atCursor,
-            });
-          allProofs.push(...response.data.records);
-          atCursor = response.data.cursor;
-          // Stop if we have enough records or hit our safety limit
-          if (allProofs.length >= maxFetch) {
-            break;
-          }
-        } while (atCursor);
+        const allProofs = await listMembershipProofs(
+          db,
+          communityDid,
+          maxFetch,
+        );
 
         // Get admins list
         let admins: any[] = [];
@@ -665,16 +630,7 @@ export function createMemberRouter(db: Kysely<Database>): Router {
         }
 
         // Create membershipProof
-        await communityAgent.api.com.atproto.repo.createRecord({
-          repo: communityDid,
-          collection: "community.opensocial.membershipProof",
-          record: {
-            $type: "community.opensocial.membershipProof",
-            memberDid,
-            cid: "",
-            confirmedAt: new Date().toISOString(),
-          },
-        });
+        await writeMembershipProof(db, communityDid, memberDid);
 
         // Update pending status
         await db
@@ -856,36 +812,17 @@ export function createMemberRouter(db: Kysely<Database>): Router {
             .json({ error: "Cannot remove the primary admin." });
         }
 
-        // Find membershipProof
-        let memberCursor: string | undefined;
-        let proofRecord: any = null;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor: memberCursor,
-            });
-          proofRecord = response.data.records.find(
-            (r: any) => r.value.memberDid === memberDid,
-          );
-          memberCursor = response.data.cursor;
-        } while (memberCursor && !proofRecord);
-
-        if (!proofRecord) {
+        // Find and delete membershipProof
+        const removed = await removeMembershipProof(
+          db,
+          communityDid,
+          memberDid,
+        );
+        if (!removed) {
           return res
             .status(404)
             .json({ error: "Member not found in this community" });
         }
-
-        // Delete membershipProof
-        const rkey = proofRecord.uri.split("/").pop()!;
-        await communityAgent.api.com.atproto.repo.deleteRecord({
-          repo: communityDid,
-          collection: "community.opensocial.membershipProof",
-          rkey,
-        });
 
         // Remove from admin list if they were an admin
         if (isAdminInList(memberDid, admins)) {
@@ -1075,11 +1012,9 @@ export function createMemberRouter(db: Kysely<Database>): Router {
 
         const originalAdmin = getOriginalAdminDid(admins);
         if (memberDid === originalAdmin) {
-          return res
-            .status(403)
-            .json({
-              error: "Cannot demote the primary admin. Use transfer instead.",
-            });
+          return res.status(403).json({
+            error: "Cannot demote the primary admin. Use transfer instead.",
+          });
         }
 
         if (!isAdminInList(memberDid, admins)) {
@@ -1162,11 +1097,9 @@ export function createMemberRouter(db: Kysely<Database>): Router {
 
         // Verify the new owner is already an admin
         if (!isAdminInList(newOwnerDid, admins)) {
-          return res
-            .status(400)
-            .json({
-              error: "New owner must already be an admin. Promote them first.",
-            });
+          return res.status(400).json({
+            error: "New owner must already be an admin. Promote them first.",
+          });
         }
 
         // Reorder: new owner goes first (becomes primary), current owner stays as regular admin
