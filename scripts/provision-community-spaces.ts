@@ -56,7 +56,7 @@ async function main() {
     const spaces = await provisionCommunitySpaces(db, did);
     console.log("Provisioned:");
     console.log(`  management: ${spaces.management}`);
-    console.log(`  content:    ${spaces.content}`);
+    console.log(`  posts:      ${spaces.posts}`);
   } finally {
     await db.destroy();
   }

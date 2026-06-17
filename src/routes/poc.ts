@@ -55,7 +55,10 @@ export function createPocRouter(db: Kysely<Database>): Router {
         list.push(a.role);
         rolesByDid.set(a.subject, list);
       }
-      // Act-as viewer is always a member; default visibility = internal.
+      // The act-as harness has no real auth, so the viewer is treated as a
+      // trusted member+admin. When real auth is wired in, derive these from the
+      // authenticated user and read `visibility` from a settings record — this
+      // is the single line that changes.
       const visible = applyMembershipVisibility(
         roster,
         { isMember: true, isAdmin: true },
