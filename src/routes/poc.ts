@@ -10,10 +10,17 @@
 import { Router } from "express";
 import type { Kysely } from "kysely";
 import type { Database } from "../db";
-import { getCommunitySpace, getSpaceClient } from "../services/spaces";
+import { getCommunitySpace } from "../services/spaces";
 import { listRoleAssignments, listRoleDefinitions } from "../services/roles";
 import {
+  listMemberships,
+  isMember,
+  recordMembership,
+  applyMembershipVisibility,
+} from "../services/membership";
+import {
   createCommunityPost,
+  createMemberPost,
   listCommunityPosts,
   NotAllowedError,
 } from "../services/posts";
@@ -31,26 +38,34 @@ export function createPocRouter(db: Kysely<Database>): Router {
     res.json({ communities: rows });
   });
 
-  // Space member list joined with each member's roles (from the management space).
+  // Roster from membership records (source of truth) + roles overlaid.
   router.get("/:did/members", async (req, res) => {
     const communityDid = decodeURIComponent(req.params.did);
     try {
       const mgmt = await getCommunitySpace(db, communityDid, "management");
       if (!mgmt) return res.json({ members: [], provisioned: false });
-      const client = await getSpaceClient(db, communityDid);
-      const { members } = await client.getMembers(mgmt);
-      const assignments = await listRoleAssignments(db, communityDid);
+
+      const [roster, assignments] = await Promise.all([
+        listMemberships(db, communityDid),
+        listRoleAssignments(db, communityDid),
+      ]);
       const rolesByDid = new Map<string, string[]>();
       for (const a of assignments) {
         const list = rolesByDid.get(a.subject) ?? [];
         list.push(a.role);
         rolesByDid.set(a.subject, list);
       }
+      // Act-as viewer is always a member; default visibility = internal.
+      const visible = applyMembershipVisibility(
+        roster,
+        { isMember: true, isAdmin: true },
+        "internal",
+      );
       res.json({
         provisioned: true,
-        members: members.map((m) => ({
-          did: m.did,
-          roles: rolesByDid.get(m.did) ?? [],
+        members: visible.map((m) => ({
+          did: m.subject,
+          roles: rolesByDid.get(m.subject) ?? [],
         })),
       });
     } catch (err) {
@@ -84,20 +99,18 @@ export function createPocRouter(db: Kysely<Database>): Router {
     }
   });
 
-  // Post on behalf of the community as `actorDid`. Role-gated.
+  // Post as the acting member by default; asCommunity=true posts on behalf of
+  // the community (role-gated by the "post" capability).
   router.post("/:did/posts", async (req, res) => {
     const communityDid = decodeURIComponent(req.params.did);
-    const { actorDid, text } = req.body ?? {};
+    const { actorDid, text, asCommunity } = req.body ?? {};
     if (!actorDid || typeof text !== "string" || text.trim().length === 0) {
       return res.status(400).json({ error: "actorDid and text are required" });
     }
     try {
-      const result = await createCommunityPost(
-        db,
-        communityDid,
-        actorDid,
-        text.trim(),
-      );
+      const result = asCommunity
+        ? await createCommunityPost(db, communityDid, actorDid, text.trim())
+        : await createMemberPost(db, communityDid, actorDid, text.trim());
       res.status(201).json(result);
     } catch (err) {
       if (err instanceof NotAllowedError) {
@@ -106,6 +119,47 @@ export function createPocRouter(db: Kysely<Database>): Router {
       logger.error({ err, communityDid }, "poc/posts create failed");
       res.status(500).json({ error: "Failed to create post" });
     }
+  });
+
+  // Contract: isCommunityMember (authenticated-user-scoped via ?actorDid).
+  router.get("/:did/isMember", async (req, res) => {
+    const communityDid = decodeURIComponent(req.params.did);
+    const actorDid = String(req.query.actorDid ?? "");
+    if (!actorDid) return res.status(400).json({ error: "actorDid required" });
+    try {
+      const member = await isMember(db, communityDid, actorDid);
+      const assignments = await listRoleAssignments(db, communityDid);
+      const role = assignments.find((a) => a.subject === actorDid)?.role;
+      res.json({ isMember: member, ...(role ? { role } : {}) });
+    } catch (err) {
+      logger.error({ err, communityDid }, "poc/isMember failed");
+      res.status(500).json({ error: "Failed" });
+    }
+  });
+
+  // Contract: joinCommunity (open join for the PoC).
+  router.post("/:did/join", async (req, res) => {
+    const communityDid = decodeURIComponent(req.params.did);
+    const { actorDid } = req.body ?? {};
+    if (!actorDid) return res.status(400).json({ error: "actorDid required" });
+    try {
+      await recordMembership(db, communityDid, actorDid);
+      res.status(201).json({ status: "active" });
+    } catch (err) {
+      logger.error({ err, communityDid }, "poc/join failed");
+      res.status(500).json({ error: "Failed to join" });
+    }
+  });
+
+  // Contract: listCommunitySpaces.
+  router.get("/:did/spaces", async (req, res) => {
+    const communityDid = decodeURIComponent(req.params.did);
+    const rows = await db
+      .selectFrom("community_spaces")
+      .select(["kind", "space_uri"])
+      .where("community_did", "=", communityDid)
+      .execute();
+    res.json({ spaces: rows });
   });
 
   return router;
