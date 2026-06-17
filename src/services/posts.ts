@@ -15,6 +15,7 @@ import {
 } from "./spaces";
 import { isMember, listMemberships } from "./membership";
 import { actorCan } from "./roles";
+import { logger } from "../lib/logger";
 
 const POST = "community.opensocial.post";
 
@@ -133,7 +134,11 @@ export async function listCommunityPosts(
           text: r.value.text,
           createdAt: r.value.createdAt,
         }));
-      } catch {
+      } catch (err) {
+        // A single member's repo being unreadable shouldn't break the feed.
+        // Logged because, until the cross-repo read path is validated live,
+        // this catch could mask the owner-reads-member-repos assumption failing.
+        logger.warn({ err, communityDid, repo }, "Failed to read member posts");
         return [] as CommunityPost[];
       }
     }),
