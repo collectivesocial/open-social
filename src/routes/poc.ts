@@ -154,12 +154,17 @@ export function createPocRouter(db: Kysely<Database>): Router {
   // Contract: listCommunitySpaces.
   router.get("/:did/spaces", async (req, res) => {
     const communityDid = decodeURIComponent(req.params.did);
-    const rows = await db
-      .selectFrom("community_spaces")
-      .select(["kind", "space_uri"])
-      .where("community_did", "=", communityDid)
-      .execute();
-    res.json({ spaces: rows });
+    try {
+      const rows = await db
+        .selectFrom("community_spaces")
+        .select(["kind", "space_uri"])
+        .where("community_did", "=", communityDid)
+        .execute();
+      res.json({ spaces: rows });
+    } catch (err) {
+      logger.error({ err, communityDid }, "poc/spaces failed");
+      res.status(500).json({ error: "Failed to load spaces" });
+    }
   });
 
   return router;
