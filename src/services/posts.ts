@@ -8,7 +8,12 @@
  */
 import type { Kysely } from "kysely";
 import type { Database } from "../db";
-import { getCommunitySpace, getSpaceClient } from "./spaces";
+import {
+  getSpaceClient,
+  getMemberSpaceClient,
+  getCommunitySpace,
+} from "./spaces";
+import { isMember, listMemberships } from "./membership";
 import { actorCan } from "./roles";
 
 const POST = "community.opensocial.post";
@@ -28,6 +33,13 @@ export interface CommunityPost {
   author: string;
   text: string;
   createdAt: string;
+}
+
+/** Flatten per-author post lists and sort newest-first. Pure (unit-tested). */
+export function aggregateAndSortPosts(
+  perAuthor: CommunityPost[][],
+): CommunityPost[] {
+  return perAuthor.flat().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
 async function postsSpace(
@@ -69,23 +81,62 @@ export async function createCommunityPost(
   });
 }
 
+/**
+ * Post as a member, into the member's own repo within the community posts
+ * space. Any active member may do this — no special capability required.
+ */
+export async function createMemberPost(
+  db: Kysely<Database>,
+  communityDid: string,
+  authorDid: string,
+  text: string,
+): Promise<{ uri: string; cid: string }> {
+  if (!(await isMember(db, communityDid, authorDid))) {
+    throw new NotAllowedError("Only community members can post.");
+  }
+  const space = await postsSpace(db, communityDid);
+  const client = await getMemberSpaceClient(db, authorDid); // authed AS the member
+  return client.createRecord(space, POST, {
+    $type: POST,
+    text,
+    author: authorDid,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * The community feed: aggregate posts across every member's repo in the posts
+ * space, plus the community's own repo (for "post as community"). Enumerates
+ * authors from the membership records (stands in for the future "list writers"
+ * primitive).
+ */
 export async function listCommunityPosts(
   db: Kysely<Database>,
   communityDid: string,
 ): Promise<CommunityPost[]> {
   const space = await postsSpace(db, communityDid);
-  const client = await getSpaceClient(db, communityDid);
-  const recs = await client.listRecordValues<{
-    text: string;
-    author: string;
-    createdAt: string;
-  }>(space, POST);
-  return recs
-    .map((r) => ({
-      rkey: r.rkey,
-      author: r.value.author,
-      text: r.value.text,
-      createdAt: r.value.createdAt,
-    }))
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const client = await getSpaceClient(db, communityDid); // owner reads
+  const roster = await listMemberships(db, communityDid);
+  const authors = [communityDid, ...roster.map((m) => m.subject)];
+
+  const perAuthor = await Promise.all(
+    authors.map(async (repo) => {
+      try {
+        const recs = await client.listRecordValues<{
+          text: string;
+          author?: string;
+          createdAt: string;
+        }>(space, POST, repo);
+        return recs.map((r) => ({
+          rkey: r.rkey,
+          author: r.value.author ?? repo,
+          text: r.value.text,
+          createdAt: r.value.createdAt,
+        }));
+      } catch {
+        return [] as CommunityPost[];
+      }
+    }),
+  );
+  return aggregateAndSortPosts(perAuthor);
 }
