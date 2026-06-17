@@ -28,14 +28,12 @@ import { logger } from "../lib/logger";
 
 /** Space type NSIDs. Declared as `type: space` lexicons for the PoC. */
 export const MANAGEMENT_SPACE_TYPE = "community.opensocial.management";
-export const CONTENT_SPACE_TYPE = "community.opensocial.content";
 export const POSTS_SPACE_TYPE = "community.opensocial.posts";
 
-export type SpaceKind = "management" | "content" | "posts";
+export type SpaceKind = "management" | "posts";
 
 const SPACE_TYPE_BY_KIND: Record<SpaceKind, string> = {
   management: MANAGEMENT_SPACE_TYPE,
-  content: CONTENT_SPACE_TYPE,
   posts: POSTS_SPACE_TYPE,
 };
 
