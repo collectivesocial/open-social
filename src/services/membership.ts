@@ -18,6 +18,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../db";
 import { createCommunityAgent } from "./atproto";
 import { getCommunitySpace, getSpaceClient } from "./spaces";
+import { actorCan } from "./roles";
 
 const MEMBERSHIP_PROOF = "community.opensocial.membershipProof";
 
@@ -198,4 +199,107 @@ export async function removeMembershipProof(
     rkey: rkeyOf(proof.uri),
   });
   return true;
+}
+
+// ─── Roster records (source of truth) ────────────────────────────────────────
+
+const MEMBERSHIP = "community.opensocial.membership";
+
+export type MemberVisibility = "public" | "internal" | "admin-only" | "none";
+
+export interface MembershipRecord {
+  subject: string;
+  status: "active" | "pending";
+  joinedAt: string;
+}
+export type Roster = MembershipRecord[];
+
+/** Pure visibility gate for the roster (the getCommunityMembers contract). */
+export function applyMembershipVisibility(
+  roster: Roster,
+  viewer: { isMember: boolean; isAdmin: boolean },
+  visibility: MemberVisibility,
+): Roster {
+  switch (visibility) {
+    case "public":
+      return roster;
+    case "internal":
+      return viewer.isMember ? roster : [];
+    case "admin-only":
+      return viewer.isAdmin ? roster : [];
+    case "none":
+      return [];
+  }
+}
+
+async function managementSpaceUri(
+  db: Kysely<Database>,
+  communityDid: string,
+): Promise<string> {
+  const space = await getCommunitySpace(db, communityDid, "management");
+  if (!space)
+    throw new Error(`Community ${communityDid} has no management space.`);
+  return space;
+}
+
+/** The roster: membership records from the management space (source of truth). */
+export async function listMemberships(
+  db: Kysely<Database>,
+  communityDid: string,
+): Promise<Roster> {
+  const space = await managementSpaceUri(db, communityDid);
+  const client = await getSpaceClient(db, communityDid);
+  const recs = await client.listRecordValues<MembershipRecord>(
+    space,
+    MEMBERSHIP,
+  );
+  return recs.map((r) => ({
+    subject: r.value.subject,
+    status: r.value.status ?? "active",
+    joinedAt: r.value.joinedAt,
+  }));
+}
+
+/** Whether `did` is an active member (per the records, not the protocol list). */
+export async function isMember(
+  db: Kysely<Database>,
+  communityDid: string,
+  did: string,
+): Promise<boolean> {
+  const roster = await listMemberships(db, communityDid);
+  return roster.some((m) => m.subject === did && m.status === "active");
+}
+
+/**
+ * Record a membership (source of truth) and derive space access (dev-env shim):
+ * every member is added to the posts space; admins (with the "manage"
+ * capability) are additionally added to the admin-only management space.
+ * Idempotent on subject. Call AFTER assigning roles so the admin check works.
+ */
+export async function recordMembership(
+  db: Kysely<Database>,
+  communityDid: string,
+  subjectDid: string,
+  opts: { approvedBy?: string } = {},
+): Promise<void> {
+  const mgmt = await managementSpaceUri(db, communityDid);
+  const posts = await getCommunitySpace(db, communityDid, "posts");
+  const client = await getSpaceClient(db, communityDid);
+
+  const roster = await listMemberships(db, communityDid);
+  if (!roster.some((m) => m.subject === subjectDid)) {
+    await client.createRecord(mgmt, MEMBERSHIP, {
+      $type: MEMBERSHIP,
+      subject: subjectDid,
+      status: "active",
+      joinedAt: new Date().toISOString(),
+      ...(opts.approvedBy ? { approvedBy: opts.approvedBy } : {}),
+    });
+  }
+
+  // SHIM (delete when the protocol mint-callout lands): pre-materialize the
+  // access decision into the space member lists the dev-env mints from.
+  if (posts) await client.addMember(posts, subjectDid).catch(() => {});
+  const isAdmin = await actorCan(db, communityDid, subjectDid, "manage");
+  if (isAdmin) await client.addMember(mgmt, subjectDid).catch(() => {});
 }
