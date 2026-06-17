@@ -1,13 +1,19 @@
-import { BskyAgent, AtpAgent } from '@atproto/api';
-import { DidResolver, HandleResolver, MemoryCache, getPds, getHandle } from '@atproto/identity';
-import type { NodeOAuthClient } from '@atproto/oauth-client-node';
-import type { Kysely } from 'kysely';
-import type { Database } from '../db';
-import { decryptIfNeeded } from '../lib/crypto';
-import { retry, isTransientError } from '../lib/retry';
-import { logger } from '../lib/logger';
-import { config } from '../config';
-import { PostgresDidCache, startDidCacheCleanup } from './didCache';
+import { BskyAgent, AtpAgent } from "@atproto/api";
+import {
+  DidResolver,
+  HandleResolver,
+  MemoryCache,
+  getPds,
+  getHandle,
+} from "@atproto/identity";
+import type { NodeOAuthClient } from "@atproto/oauth-client-node";
+import type { Kysely } from "kysely";
+import type { Database } from "../db";
+import { decryptIfNeeded } from "../lib/crypto";
+import { retry, isTransientError } from "../lib/retry";
+import { logger } from "../lib/logger";
+import { config } from "../config";
+import { PostgresDidCache, startDidCacheCleanup } from "./didCache";
 
 /**
  * Shared identity resolvers backed by a DID document cache.
@@ -44,7 +50,7 @@ export function initDidCache(db: Kysely<Database>): () => void {
   // `cache` is a public property on BaseResolver; swapping it lets us reuse
   // the existing `didResolver` instance without rebinding every importer.
   didResolver.cache = postgresCache;
-  logger.info('DID resolver now using PostgreSQL-backed cache');
+  logger.info("DID resolver now using PostgreSQL-backed cache");
   return startDidCacheCleanup(postgresCache);
 }
 
@@ -85,7 +91,7 @@ setInterval(() => {
 
 /** Ensure a PDS host string is a full URL with scheme. */
 export function ensureServiceUrl(pdsHost: string): string {
-  if (pdsHost.startsWith('http://') || pdsHost.startsWith('https://')) {
+  if (pdsHost.startsWith("http://") || pdsHost.startsWith("https://")) {
     return pdsHost;
   }
   return `https://${pdsHost}`;
@@ -99,7 +105,10 @@ export function ensureServiceUrl(pdsHost: string): string {
  * and caches DID documents in memory. Falls back to the provided fallback
  * URL if resolution fails.
  */
-export async function resolvePdsEndpoint(did: string, fallback?: string): Promise<string> {
+export async function resolvePdsEndpoint(
+  did: string,
+  fallback?: string,
+): Promise<string> {
   try {
     const doc = await didResolver.resolve(did);
     if (doc) {
@@ -109,7 +118,7 @@ export async function resolvePdsEndpoint(did: string, fallback?: string): Promis
       }
     }
   } catch (err) {
-    logger.warn({ did, error: err }, 'Failed to resolve PDS from DID document');
+    logger.warn({ did, error: err }, "Failed to resolve PDS from DID document");
   }
   if (fallback) return ensureServiceUrl(fallback);
   throw new Error(`Could not resolve PDS for ${did}`);
@@ -173,13 +182,13 @@ export async function resolveAuthServer(
     } catch (err) {
       logger.warn(
         { input: identityOrServiceUrl, error: err },
-        'Failed to resolve auth server via OAuthResolver; falling back to PDS endpoint',
+        "Failed to resolve auth server via OAuthResolver; falling back to PDS endpoint",
       );
     }
   }
   // Fallback: use the PDS endpoint. In single-PDS architectures the PDS URL
   // *is* the auth server URL, so this preserves existing behaviour.
-  if (identityOrServiceUrl.startsWith('did:')) {
+  if (identityOrServiceUrl.startsWith("did:")) {
     return resolvePdsEndpoint(identityOrServiceUrl, fallback);
   }
   if (/^https?:\/\//.test(identityOrServiceUrl)) {
@@ -197,7 +206,7 @@ export async function resolveAuthServer(
  * performs that round-trip check and throws if the two do not agree.
  */
 export async function resolveHandleToDid(handle: string): Promise<string> {
-  const normalized = handle.toLowerCase().replace(/^@/, '');
+  const normalized = handle.toLowerCase().replace(/^@/, "");
   const did = await handleResolver.resolve(normalized);
   if (!did) {
     throw new Error(`Could not resolve handle "${handle}" to a DID`);
@@ -209,13 +218,16 @@ export async function resolveHandleToDid(handle: string): Promise<string> {
   const docHandle = getHandle(doc);
   if (!docHandle || docHandle.toLowerCase() !== normalized) {
     throw new Error(
-      `Handle verification failed: "${handle}" does not match DID document handle "${docHandle ?? 'none'}"`,
+      `Handle verification failed: "${handle}" does not match DID document handle "${docHandle ?? "none"}"`,
     );
   }
   return did;
 }
 
-export async function createCommunityAgent(db: Kysely<Database>, did: string): Promise<BskyAgent> {
+export async function createCommunityAgent(
+  db: Kysely<Database>,
+  did: string,
+): Promise<BskyAgent> {
   // 1. Return a cached agent if it's still valid
   const cached = agentCache.get(did);
   if (cached && Date.now() < cached.expiresAt) {
@@ -232,13 +244,13 @@ export async function createCommunityAgent(db: Kysely<Database>, did: string): P
   // 3. Perform the actual login, sharing the promise with concurrent callers
   const loginPromise = (async (): Promise<BskyAgent> => {
     const community = await db
-      .selectFrom('communities')
-      .select(['handle', 'pds_host', 'app_password'])
-      .where('did', '=', did)
+      .selectFrom("communities")
+      .select(["handle", "pds_host", "app_password"])
+      .where("did", "=", did)
       .executeTakeFirst();
 
     if (!community) {
-      throw new Error('Community not found');
+      throw new Error("Community not found");
     }
 
     // Discover the OAuth authorization server for the community's identity.
@@ -253,10 +265,11 @@ export async function createCommunityAgent(db: Kysely<Database>, did: string): P
     const agent = new BskyAgent({ service: authServerUrl });
 
     await retry(
-      () => agent.login({
-        identifier: did,
-        password: decryptIfNeeded(community.app_password),
-      }),
+      () =>
+        agent.login({
+          identifier: did,
+          password: decryptIfNeeded(community.app_password),
+        }),
       {
         maxRetries: 2,
         initialDelay: 1000,
@@ -268,12 +281,12 @@ export async function createCommunityAgent(db: Kysely<Database>, did: string): P
           handle: community.handle,
           authServerUrl,
         },
-      }
+      },
     );
 
     // Cache the authenticated agent
     agentCache.set(did, { agent, expiresAt: Date.now() + AGENT_CACHE_TTL_MS });
-    logger.info({ did }, 'Community agent cached');
+    logger.info({ did }, "Community agent cached");
 
     return agent;
   })();
@@ -285,6 +298,31 @@ export async function createCommunityAgent(db: Kysely<Database>, did: string): P
   } finally {
     pendingLogins.delete(did);
   }
+}
+
+/**
+ * Build an agent for a PoC *member* account (dev-only). Mirrors
+ * createCommunityAgent but reads credentials from `poc_member_accounts`.
+ * Used so the /poc act-as switcher can write into a member's own repo.
+ */
+export async function getMemberAgent(
+  db: Kysely<Database>,
+  did: string,
+): Promise<BskyAgent> {
+  const acct = await db
+    .selectFrom("poc_member_accounts")
+    .select(["handle", "pds_host", "app_password"])
+    .where("did", "=", did)
+    .executeTakeFirst();
+  if (!acct) throw new Error(`No PoC member account for ${did}`);
+
+  const authServerUrl = await resolveAuthServer(did, acct.pds_host);
+  const agent = new BskyAgent({ service: authServerUrl });
+  await agent.login({
+    identifier: did,
+    password: decryptIfNeeded(acct.app_password),
+  });
+  return agent;
 }
 
 /**

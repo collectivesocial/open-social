@@ -19,7 +19,11 @@
 import type { BskyAgent } from "@atproto/api";
 import type { Kysely } from "kysely";
 import type { Database } from "../db";
-import { createCommunityAgent, resolvePdsEndpoint } from "./atproto";
+import {
+  createCommunityAgent,
+  getMemberAgent,
+  resolvePdsEndpoint,
+} from "./atproto";
 import { logger } from "../lib/logger";
 
 /** Space type NSIDs. Declared as `type: space` lexicons for the PoC. */
@@ -276,6 +280,24 @@ export async function getSpaceClient(
     .where("did", "=", communityDid)
     .executeTakeFirst();
   const pdsUrl = await resolvePdsEndpoint(communityDid, community?.pds_host);
+  return new SpaceClient(agent, pdsUrl);
+}
+
+/**
+ * Build a SpaceClient authenticated as a *member* (not the community), so the
+ * member can write records into their OWN repo within a community space.
+ */
+export async function getMemberSpaceClient(
+  db: Kysely<Database>,
+  memberDid: string,
+): Promise<SpaceClient> {
+  const agent = await getMemberAgent(db, memberDid);
+  const acct = await db
+    .selectFrom("poc_member_accounts")
+    .select("pds_host")
+    .where("did", "=", memberDid)
+    .executeTakeFirst();
+  const pdsUrl = await resolvePdsEndpoint(memberDid, acct?.pds_host);
   return new SpaceClient(agent, pdsUrl);
 }
 
