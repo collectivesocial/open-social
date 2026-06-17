@@ -300,7 +300,7 @@ export async function getMemberSpaceClient(
 }
 
 /**
- * Ensure the community's management + content spaces exist, creating any that
+ * Ensure the community's management + posts spaces exist, creating any that
  * are missing. Idempotent: provisioned space URIs are recorded in
  * `community_spaces`.
  */
