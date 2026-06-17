@@ -10,10 +10,10 @@
  *   1. Creates a community + admin + member account on the dev-env PDS.
  *   2. Inserts the community (encrypted app password) into open-social's DB and
  *      writes its profile + admins records.
- *   3. Provisions the community's management/content/posts permissioned spaces.
+ *   3. Provisions the community's management/posts permissioned spaces.
  *   4. Seeds governance into the MANAGEMENT space: role definitions
  *      (admin -> can "post"/"manage", member -> none) + role assignments, and
- *      membership proofs for both accounts.
+ *      roster membership records for both accounts.
  *
  * Run `npm run migrate:up` first. Then experiment via the open-social-web PoC
  * page or `npm run demo:membership`.
@@ -27,7 +27,8 @@ import { encrypt } from "../src/lib/crypto";
 import { config } from "../src/config";
 import { provisionCommunitySpaces } from "../src/services/spaces";
 import { writeRoleDefinition, assignRole } from "../src/services/roles";
-import { writeMembershipProof } from "../src/services/membership";
+import { recordMembership } from "../src/services/membership";
+import { createMemberPost } from "../src/services/posts";
 
 // First label must be 3-18 chars and not a reserved subdomain (the PDS reserves
 // "community", "member", "admin", etc.), so use non-reserved handles.
@@ -73,6 +74,36 @@ async function createAccount(
   const did = agent.session?.did;
   if (!did) throw new Error(`account ${handle} returned no DID`);
   return { did, handle, password };
+}
+
+async function persistMemberAccount(
+  db: ReturnType<typeof createDb>,
+  pdsUrl: string,
+  acct: CreatedAccount,
+): Promise<void> {
+  const agent = new BskyAgent({ service: pdsUrl });
+  await agent.login({ identifier: acct.did, password: acct.password });
+  const appPassword = (
+    await agent.com.atproto.server.createAppPassword({
+      name: `poc-${Date.now()}`,
+    })
+  ).data.password;
+  await db
+    .insertInto("poc_member_accounts")
+    .values({
+      did: acct.did,
+      handle: acct.handle,
+      pds_host: pdsUrl,
+      app_password: encrypt(appPassword),
+    })
+    .onConflict((oc) =>
+      oc.column("did").doUpdateSet({
+        handle: acct.handle,
+        pds_host: pdsUrl,
+        app_password: encrypt(appPassword),
+      }),
+    )
+    .execute();
 }
 
 async function main() {
@@ -145,6 +176,10 @@ async function main() {
         .execute();
     }
 
+    // 3b. Persist member app-passwords so the /poc UI can act as them.
+    await persistMemberAccount(db, pdsUrl, admin);
+    await persistMemberAccount(db, pdsUrl, member);
+
     // 4. Profile + admins records (admin account is the community admin).
     console.log("Writing profile + admins records...");
     await communityAgent.com.atproto.repo.putRecord({
@@ -169,7 +204,7 @@ async function main() {
       },
     });
 
-    // 5. Provision the permissioned spaces (management/content/posts).
+    // 5. Provision the permissioned spaces (management/posts).
     console.log("Provisioning permissioned spaces (slow first login ~20s)...");
     const spaces = await provisionCommunitySpaces(db, community.did);
     console.log(`  management: ${spaces.management}`);
@@ -187,9 +222,28 @@ async function main() {
     await assignRole(db, community.did, admin.did, "admin", community.did);
     await assignRole(db, community.did, member.did, "member", community.did);
 
-    // Both accounts are members (proof + space membership).
-    await writeMembershipProof(db, community.did, admin.did);
-    await writeMembershipProof(db, community.did, member.did);
+    // Roster records (source of truth) + derived space access.
+    await recordMembership(db, community.did, admin.did, {
+      approvedBy: community.did,
+    });
+    await recordMembership(db, community.did, member.did, {
+      approvedBy: community.did,
+    });
+
+    // Seed member-authored posts so the aggregate feed is visible immediately.
+    console.log("Seeding member-authored posts...");
+    await createMemberPost(
+      db,
+      community.did,
+      admin.did,
+      "Hello from the admin — posting as myself.",
+    );
+    await createMemberPost(
+      db,
+      community.did,
+      member.did,
+      "And hello from a regular member!",
+    );
   } finally {
     await db.destroy();
   }
