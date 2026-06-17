@@ -233,10 +233,25 @@ export interface StreamToken {
 export interface CommunitySpace {
   id: Generated<number>;
   community_did: string;
-  /** 'management' | 'content' */
+  /** 'management' | 'posts' */
   kind: string;
   /** The space URI returned by com.atproto.space.createSpace. */
   space_uri: string;
+  created_at: Generated<Date>;
+}
+
+/**
+ * Dev-only member accounts for PoC.
+ *
+ * Stores app-passwords for member DIDs so the PoC `/poc` endpoints can write
+ * "as a member" without real OAuth. Encrypted password persisted, keyed by DID.
+ * Never used in production.
+ */
+export interface PocMemberAccount {
+  did: string;
+  handle: string;
+  pds_host: string;
+  app_password: string;
   created_at: Generated<Date>;
 }
 
@@ -262,6 +277,7 @@ export interface Database {
   event_log: EventLogEntry;
   stream_tokens: StreamToken;
   community_spaces: CommunitySpace;
+  poc_member_accounts: PocMemberAccount;
 }
 
 export function createDb(connectionString: string): Kysely<Database> {
