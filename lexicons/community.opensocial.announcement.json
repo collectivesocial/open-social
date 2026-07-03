@@ -1,0 +1,46 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.announcement",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An announcement posted to a community's group-only announcement space. Stored in the community's repo. Announcements are readable only by community members and writable only by community admins (enforced by the group management service, not the PDS). This collection is the first group-only space in Open Social and is intended to migrate to a permissioned-data space (atproto proposal 0016) once that protocol is available.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["title", "text", "createdBy", "createdAt"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxGraphemes": 300,
+            "description": "Title of the announcement"
+          },
+          "text": {
+            "type": "string",
+            "maxGraphemes": 10000,
+            "description": "Body text of the announcement (plain text)"
+          },
+          "createdBy": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the admin who posted the announcement"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the announcement was posted"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the announcement was last edited"
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Whether the announcement is pinned to the top of the space"
+          }
+        }
+      }
+    }
+  }
+}

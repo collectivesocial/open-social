@@ -33,7 +33,10 @@ export type AuditAction =
   | "hierarchy.approved"
   | "hierarchy.accepted"
   | "hierarchy.rejected"
-  | "hierarchy.revoked";
+  | "hierarchy.revoked"
+  | "announcement.created"
+  | "announcement.updated"
+  | "announcement.deleted";
 
 export function createAuditLogService(db: Kysely<Database>) {
   async function log(params: {
