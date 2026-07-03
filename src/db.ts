@@ -1,6 +1,6 @@
-import { Generated, Kysely, PostgresDialect, sql } from 'kysely';
-import { Pool } from 'pg';
-import type { AuthState, AuthSession } from './models/auth';
+import { Generated, Kysely, PostgresDialect, sql } from "kysely";
+import { Pool } from "pg";
+import type { AuthState, AuthSession } from "./models/auth";
 
 export interface Community {
   did: string;
@@ -24,7 +24,7 @@ export interface App {
   domain: string;
   creator_did: string;
   api_key: string;
-  auth_method: 'api_key' | 'http_signature' | 'both';
+  auth_method: "api_key" | "http_signature" | "both";
   cimd_url: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
@@ -222,6 +222,40 @@ export interface StreamToken {
   created_at: Generated<Date>;
 }
 
+/**
+ * First-class spaces (permissioned data Phase 1): a named access boundary
+ * around one or more collections in the community's repo. Introduced in
+ * migration 016.
+ */
+export interface CommunitySpace {
+  id: Generated<number>;
+  community_did: string;
+  space_key: string;
+  name: string;
+  description: string | null;
+  /** NSID describing the space's modality. */
+  space_type: string;
+  /** 'public' | 'member' | 'admin' | 'invite' | custom role name */
+  read_access: string;
+  /** 'member' | 'admin' | custom role name */
+  write_access: string;
+  /** JSON array of collection NSIDs belonging to this space. */
+  collections: string;
+  created_by: string;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Explicit invite list for invite-only spaces. */
+export interface SpaceInvite {
+  id: Generated<number>;
+  community_did: string;
+  space_key: string;
+  invitee_did: string;
+  invited_by: string;
+  created_at: Generated<Date>;
+}
+
 // ─── Database type map ───────────────────────────────────────────────
 
 export interface Database {
@@ -243,6 +277,8 @@ export interface Database {
   did_cache: DidCacheEntry;
   event_log: EventLogEntry;
   stream_tokens: StreamToken;
+  community_spaces: CommunitySpace;
+  space_invites: SpaceInvite;
 }
 
 export function createDb(connectionString: string): Kysely<Database> {

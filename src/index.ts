@@ -17,6 +17,7 @@ import { createAnnouncementsRouter } from "./routes/announcements";
 import { createWebhookRouter } from "./routes/webhooks";
 import { createStreamRouter } from "./routes/stream";
 import { createPermissionsRouter } from "./routes/permissions";
+import { createSpacesRouter } from "./routes/spaces";
 import { createHierarchyRouter } from "./routes/hierarchy";
 import { createEventsRouter } from "./routes/events";
 import { createXrpcRouter } from "./xrpc/server";
@@ -128,6 +129,7 @@ async function start() {
       createAnnouncementsRouter(oauthClient, db),
     );
     app.use("/api/v1/communities", createPermissionsRouter(db));
+    app.use("/api/v1/communities", createSpacesRouter(db));
     app.use("/api/v1/communities", createHierarchyRouter(db));
     app.use("/api/v1/webhooks", createWebhookRouter(db));
 

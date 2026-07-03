@@ -57,18 +57,24 @@ Anything learned here (pinning, editing, role delegation to moderators)
 carries forward unchanged, because the permission model is already
 expressed as per-collection, per-operation role rules.
 
-### Phase 1 — first-class spaces
+### Phase 1 — first-class spaces (shipped)
 
-Make spaces explicit objects instead of implicit gated collections:
+Spaces are explicit objects instead of implicit gated collections:
 
-- A `spaces` registry per community: space type (NSID), space key, policy
-  (`public` | `member-list` | `managing-app` | role rule), declared
-  collections.
+- A `community_spaces` registry per community: space key, space type
+  (NSID), read/write access policy (`public` | `member` | `admin` |
+  `invite` | custom role), declared collections. Definitions are mirrored
+  into the community repo as `community.opensocial.space` records for
+  on-protocol discoverability.
 - `listGroupSpaces` and `createGroupSpace` methods (the two gaps identified
   in the [group management methods discussion](https://discourse.atprotocol.community/t/another-follow-up-topic-group-management-methods/941)),
-  plus `invite`/`revokeInvite` objects for invite-only spaces.
-- The announcement space becomes row #1 in the registry rather than a
-  special case.
+  plus `invite`/`revokeInvite` for invite-only spaces — see the
+  [Spaces section of API.md](API.md#spaces).
+- Space policies are enforced as an additional gate on the record-access
+  paths: a space can tighten access beyond the per-app collection
+  permissions (e.g. invite-only reads), never loosen it.
+- The announcement space is row #1 in the registry rather than a special
+  case; every new community gets it by default.
 
 This phase is protocol-independent and immediately useful to client apps.
 

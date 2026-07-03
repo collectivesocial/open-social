@@ -29,6 +29,7 @@ import {
 } from "../middleware/auth";
 import { authRateLimiter } from "../middleware/rateLimit";
 import { checkAdmin, seedCollectionPermissions } from "../services/permissions";
+import { ensureDefaultSpaces } from "../services/spaces";
 import { createAuditLogService } from "../services/auditLog";
 import { memberRolesCache } from "../lib/cache";
 import { logger } from "../lib/logger";
@@ -858,6 +859,8 @@ export function createAuthRouter(
             "Failed to enable system app for new community",
           );
         }
+
+        await ensureDefaultSpaces(db, communityDid, agent.assertDid);
 
         return res.json({
           success: true,

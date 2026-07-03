@@ -1,0 +1,73 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.space",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A space definition: a named access boundary around one or more collections in the community's repo (permissioned data Phase 1). The record key is the space key. The group management service enforces the declared read/write access; this record makes the space discoverable and portable on-protocol.",
+      "key": "any",
+      "record": {
+        "type": "object",
+        "required": [
+          "name",
+          "readAccess",
+          "writeAccess",
+          "collections",
+          "createdBy",
+          "createdAt"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxGraphemes": 128,
+            "description": "Display name of the space"
+          },
+          "description": {
+            "type": "string",
+            "maxGraphemes": 512,
+            "description": "What this space is for"
+          },
+          "spaceType": {
+            "type": "string",
+            "format": "nsid",
+            "description": "NSID describing the space's modality, per the permissioned data proposal (defaults to community.opensocial.space)"
+          },
+          "readAccess": {
+            "type": "string",
+            "maxGraphemes": 100,
+            "description": "Who may read records in this space: 'public', 'member', 'admin', 'invite' (explicit invite list), or a custom role name",
+            "knownValues": ["public", "member", "admin", "invite"]
+          },
+          "writeAccess": {
+            "type": "string",
+            "maxGraphemes": 100,
+            "description": "Minimum role required to write records in this space: 'member', 'admin', or a custom role name",
+            "knownValues": ["member", "admin"]
+          },
+          "collections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "nsid"
+            },
+            "maxLength": 16,
+            "description": "Collections whose records belong to this space"
+          },
+          "createdBy": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the admin who created the space"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}
