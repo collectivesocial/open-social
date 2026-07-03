@@ -3,6 +3,7 @@
 Community management infrastructure for ATProto applications.
 
 ## Features
+
 - App registration and API key management
 - Community creation and management
 - Membership tracking via ATProto records
@@ -50,11 +51,13 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete setup instructions.
 ### Basic Setup
 
 1. Copy `.env.example` to `.env`:
+
    ```bash
    cp .env.example .env
    ```
 
 2. Generate required secrets:
+
    ```bash
    # Generate ENCRYPTION_KEY
    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -64,6 +67,7 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete setup instructions.
    ```
 
 3. Update `.env` with your values:
+
    ```bash
    DATABASE_URL=postgresql://user:password@localhost:5432/opensocial
    ENCRYPTION_KEY=<generated-encryption-key>
@@ -81,14 +85,24 @@ The server will validate all required environment variables at startup and fail 
 
 ## API Documentation
 
-### Authentication
-All endpoints require an API key passed via `X-Api-Key` header.
+See **[docs/API.md](docs/API.md)** for the full group management API reference,
+including authentication, membership, roles and permissions, records,
+announcements, hierarchy, webhooks, and the XRPC surface.
 
-### Endpoints
-- `POST /api/v1/apps/register` - Register new app
-- `POST /api/v1/communities` - Create community
-- `GET /api/v1/communities` - List communities
-- `POST /api/v1/communities/:id/members` - Join community
+Related design docs:
+
+- [docs/PERMISSIONED_DATA.md](docs/PERMISSIONED_DATA.md) — roadmap for adopting
+  atproto permissioned data (proposal 0016), starting with the group-only
+  announcement space
+- [docs/RUST_REWRITE.md](docs/RUST_REWRITE.md) — assessment of rewriting the
+  service in Rust
+
+### Quick orientation
+
+- App-facing endpoints live under `/api/v1/` and authenticate with an API key
+  (`X-Api-Key` header) or HTTP Message Signatures
+- User-facing endpoints (web UI) authenticate with atproto OAuth sessions
+- An ATProto-style XRPC surface is exposed under `/xrpc/`
 
 ## Local Development (devnet)
 
@@ -151,12 +165,12 @@ Tears down all containers and volumes. Next `devnet:up` starts fresh.
 
 ### npm scripts reference
 
-| Script | What it does |
-|--------|-------------|
-| `devnet:up` | Start the ATProto devnet + Postgres + MailDev |
+| Script        | What it does                                  |
+| ------------- | --------------------------------------------- |
+| `devnet:up`   | Start the ATProto devnet + Postgres + MailDev |
 | `devnet:down` | Stop and remove all devnet containers/volumes |
-| `dev:devnet` | Start the app against the local devnet |
-| `test:devnet` | Run the devnet smoke test |
+| `dev:devnet`  | Start the app against the local devnet        |
+| `test:devnet` | Run the devnet smoke test                     |
 
 ### Directory layout
 
