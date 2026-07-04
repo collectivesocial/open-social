@@ -25,6 +25,7 @@ import {
   resolvePdsEndpoint,
 } from "./atproto";
 import { logger } from "../lib/logger";
+import { config } from "../config";
 
 /** Space type NSIDs. Declared as `type: space` lexicons for the PoC. */
 export const MANAGEMENT_SPACE_TYPE = "community.opensocial.management";
@@ -356,6 +357,20 @@ export async function getMemberSpaceClient(
 }
 
 /**
+ * Build the {@link SpaceConfig} that delegates a space's credential/access
+ * decisions to OpenSocial (the managing app) rather than to the space's own
+ * open/allow-list membership. Used by {@link provisionCommunitySpaces} so
+ * newly created spaces route access checks through `checkUserAccess`.
+ */
+export function buildManagedSpaceConfig(serviceId: string): SpaceConfig {
+  return {
+    policy: "managing-app",
+    appAccess: { $type: "com.atproto.simplespace.defs#open" },
+    managingApp: serviceId,
+  };
+}
+
+/**
  * Ensure the community's management + posts spaces exist, creating any that
  * are missing. Idempotent: provisioned space URIs are recorded in
  * `community_spaces`.
@@ -376,12 +391,23 @@ export async function provisionCommunitySpaces(
   const client = await getSpaceClient(db, communityDid);
   const result = {} as Record<SpaceKind, string>;
 
+  const spaceConfig = config.serviceId
+    ? buildManagedSpaceConfig(config.serviceId)
+    : undefined;
+  if (!spaceConfig) {
+    logger.warn(
+      "OPENSOCIAL_SERVICE_DID unset — provisioning spaces with host default policy (member-list)",
+    );
+  }
+
   for (const kind of Object.keys(SPACE_TYPE_BY_KIND) as SpaceKind[]) {
     let uri = byKind.get(kind);
     if (!uri) {
       const created = await client.createSpace(
         communityDid,
         SPACE_TYPE_BY_KIND[kind],
+        undefined,
+        spaceConfig,
       );
       uri = created.uri;
       await db
