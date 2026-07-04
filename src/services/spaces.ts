@@ -37,6 +37,19 @@ const SPACE_TYPE_BY_KIND: Record<SpaceKind, string> = {
   posts: POSTS_SPACE_TYPE,
 };
 
+/** Membership/read policy for a space, set at creation via `SpaceConfig`. */
+export type SimplespacePolicy = "public" | "member-list" | "managing-app";
+
+export type SpaceAppAccess =
+  | { $type: "com.atproto.simplespace.defs#open" }
+  | { $type: "com.atproto.simplespace.defs#allowList"; allowed: string[] };
+
+export interface SpaceConfig {
+  policy: SimplespacePolicy;
+  appAccess: SpaceAppAccess;
+  managingApp?: string;
+}
+
 export class SpaceXrpcError extends Error {
   constructor(
     public status: number,
@@ -71,21 +84,52 @@ export interface SpaceRecordRef {
 }
 
 /**
- * Thin authenticated client for com.atproto.space.* on a single community's
- * PDS. Construct via {@link getSpaceClient}.
+ * Thin authenticated client for com.atproto.space.* (record CRUD) and
+ * com.atproto.simplespace.* (space/membership management) on a single
+ * community's PDS. Construct via {@link getSpaceClient}, or via
+ * {@link SpaceClient.withToken} to authenticate with a space-credential JWT
+ * instead of an agent session (e.g. a member reading with a scoped token).
  */
 export class SpaceClient {
+  private agent: BskyAgent | null = null;
+  private getToken: () => Promise<string>;
+
   constructor(
-    private agent: BskyAgent,
+    agent: BskyAgent | null,
     private pdsUrl: string,
-  ) {}
+    tokenProvider?: () => Promise<string>,
+  ) {
+    if (tokenProvider) {
+      this.getToken = tokenProvider;
+    } else if (agent) {
+      this.agent = agent;
+      this.getToken = async () => {
+        const token = (agent as any).session?.accessJwt as string | undefined;
+        if (!token) throw new Error("community agent has no active session");
+        return token;
+      };
+    } else {
+      throw new Error("SpaceClient needs an agent or a token provider");
+    }
+  }
+
+  /**
+   * Build a SpaceClient authenticated with a space-credential JWT rather than
+   * an agent session. Token clients have no known DID, so record methods must
+   * be called with `repo` explicit (see {@link ownDid}).
+   */
+  static withToken(
+    getToken: () => Promise<string>,
+    pdsUrl: string,
+  ): SpaceClient {
+    return new SpaceClient(null, pdsUrl, getToken);
+  }
 
   private async call<T = any>(
     nsid: string,
     opts: SpaceXrpcOptions,
   ): Promise<T | undefined> {
-    const token = (this.agent as any).session?.accessJwt as string | undefined;
-    if (!token) throw new Error("community agent has no active session");
+    const token = await this.getToken();
 
     const url = new URL(`/xrpc/${nsid}`, this.pdsUrl);
     if (opts.params) {
@@ -119,19 +163,31 @@ export class SpaceClient {
     ownerDid: string,
     type: string,
     skey?: string,
+    config?: SpaceConfig,
   ): Promise<{ uri: string }> {
-    return (await this.call("com.atproto.space.createSpace", {
-      method: "POST",
-      body: { did: ownerDid, type, ...(skey ? { skey } : {}) },
-    })) as { uri: string };
+    const body: Record<string, unknown> = { did: ownerDid, type };
+    if (skey) body.skey = skey;
+    if (config) body.config = config;
+    const res = await this.call<{ uri: string }>(
+      "com.atproto.simplespace.createSpace",
+      { method: "POST", body },
+    );
+    if (!res) throw new Error("createSpace returned no body");
+    return res;
   }
 
   /**
    * DID of the authenticated account (the community). com.atproto.space.*
    * record methods all require a `repo` — the repo within the space to act on —
-   * which defaults to the community's own repo.
+   * which defaults to the community's own repo. Clients built via
+   * {@link SpaceClient.withToken} have no agent session, so they must always
+   * pass `repo` explicitly.
    */
   private ownDid(): string {
+    if (!this.agent)
+      throw new Error(
+        "SpaceClient built with withToken() has no DID; pass `repo` explicitly",
+      );
     const did = (this.agent as any).session?.did as string | undefined;
     if (!did) throw new Error("community agent has no active session");
     return did;
@@ -245,20 +301,20 @@ export class SpaceClient {
   }
 
   async addMember(space: string, did: string): Promise<void> {
-    await this.call("com.atproto.space.addMember", {
+    await this.call("com.atproto.simplespace.addMember", {
       method: "POST",
       body: { space, did },
     });
   }
 
-  async getMembers(
+  async listMembers(
     space: string,
     opts: { limit?: number; cursor?: string } = {},
   ): Promise<{ members: Array<{ did: string }>; cursor?: string }> {
     const res = await this.call<{
       members: Array<{ did: string }>;
       cursor?: string;
-    }>("com.atproto.space.getMembers", {
+    }>("com.atproto.simplespace.listMembers", {
       method: "GET",
       params: { space, limit: opts.limit, cursor: opts.cursor },
     });

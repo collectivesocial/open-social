@@ -59,9 +59,9 @@ async function main() {
 
     if (space) {
       const client = await getSpaceClient(db, communityDid);
-      const { members } = await client.getMembers(space);
+      const { members } = await client.listMembers(space);
       console.log(
-        "4. space member list (com.atproto.space.getMembers) ->",
+        "4. space member list (com.atproto.simplespace.listMembers) ->",
         JSON.stringify(members.map((m) => m.did)),
       );
     }
