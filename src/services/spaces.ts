@@ -397,6 +397,26 @@ export async function provisionCommunitySpaces(
   return result;
 }
 
+/** Look up a provisioned space's owning community + kind by its URI, or null. */
+export async function getCommunitySpaceByUri(
+  db: Kysely<Database>,
+  spaceUri: string,
+): Promise<{
+  community_did: string;
+  kind: SpaceKind;
+  space_uri: string;
+} | null> {
+  const row = await db
+    .selectFrom("community_spaces")
+    .select(["community_did", "kind", "space_uri"])
+    .where("space_uri", "=", spaceUri)
+    .executeTakeFirst();
+  return (
+    (row as { community_did: string; kind: SpaceKind; space_uri: string }) ??
+    null
+  );
+}
+
 /** Look up a provisioned space URI for a community, or null if not provisioned. */
 export async function getCommunitySpace(
   db: Kysely<Database>,
