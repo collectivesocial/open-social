@@ -33,13 +33,25 @@ async function xrpcJson(
   init: RequestInit,
   label: string,
 ): Promise<any> {
-  const res = await fetch(url, init);
-  if (!res.ok) {
+  try {
+    const res = await fetch(url, init);
+    if (!res.ok) {
+      throw new Error(
+        `${label} failed: ${res.status} ${await res.text().catch(() => "")}`,
+      );
+    }
+    return await res.json();
+  } catch (err) {
+    // Already labeled by the !res.ok branch above — rethrow as-is.
+    if (err instanceof Error && err.message.startsWith(`${label} failed:`)) {
+      throw err;
+    }
+    // Label network-level failures (DNS, connection refused) and malformed
+    // JSON so callers can tell which call in the exchange broke.
     throw new Error(
-      `${label} failed: ${res.status} ${await res.text().catch(() => "")}`,
+      `${label} failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  return res.json();
 }
 
 export async function getCommunitySpaceCredential(

@@ -110,4 +110,24 @@ describe("spaceCredentials", () => {
       getCommunitySpaceCredential({} as any, "did:plc:comm", SPACE),
     ).rejects.toThrow(/getDelegationToken/);
   });
+
+  it("labels network-level failures with the failing call name", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    await expect(
+      getCommunitySpaceCredential({} as any, "did:plc:comm", SPACE),
+    ).rejects.toThrow(/getDelegationToken.*ECONNREFUSED/);
+  });
+
+  it("labels a failed getSpaceCredential call", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ token: "t" }) })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => "nope",
+      });
+    await expect(
+      getCommunitySpaceCredential({} as any, "did:plc:comm", SPACE),
+    ).rejects.toThrow(/getSpaceCredential.*403/);
+  });
 });
