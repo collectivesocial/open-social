@@ -28,6 +28,7 @@ import { requestLogger } from "./middleware/requestLogger";
 import { validateEnvironment } from "./lib/validateEnv";
 import { createEventStreamService } from "./services/eventStream";
 import { createEventStream } from "./ws/eventStream";
+import { buildServiceDidDoc } from "./services/serviceIdentity";
 
 dotenv.config();
 
@@ -122,6 +123,17 @@ async function start() {
         service: "opensocial-api",
       });
     });
+
+    if (config.serviceDid) {
+      app.get("/.well-known/did.json", (_req, res) => {
+        res.json(
+          buildServiceDidDoc({
+            serviceDid: config.serviceDid!,
+            serviceEndpoint: config.publicUrl,
+          }),
+        );
+      });
+    }
 
     app.use("/api/v1/apps", createAppRouter(oauthClient, db));
     app.use("/api/v1/communities", createCommunityRouter(db));
