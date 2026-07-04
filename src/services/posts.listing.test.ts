@@ -100,4 +100,26 @@ describe("listCommunityPosts cross-repo reads", () => {
     const posts = await listCommunityPosts({} as any, "did:plc:comm");
     expect(posts.map((p) => p.text)).toEqual(["own post"]);
   });
+
+  it("never fetches a pending member's repo", async () => {
+    mocks.listMemberships.mockResolvedValue([
+      { subject: "did:plc:member", status: "active", joinedAt: "x" },
+      { subject: "did:plc:pending", status: "pending", joinedAt: "y" },
+    ]);
+    const posts = await listCommunityPosts({} as any, "did:plc:comm");
+    expect(posts.map((p) => p.text)).toEqual(["member post", "own post"]);
+    expect(mocks.resolvePdsEndpoint).toHaveBeenCalledTimes(1);
+    expect(mocks.resolvePdsEndpoint).not.toHaveBeenCalledWith(
+      "did:plc:pending",
+    );
+  });
+
+  it("degrades to community-only posts when the space credential exchange fails", async () => {
+    mocks.getCommunitySpaceCredential.mockRejectedValue(
+      new Error("credential exchange failed"),
+    );
+    const posts = await listCommunityPosts({} as any, "did:plc:comm");
+    expect(posts.map((p) => p.text)).toEqual(["own post"]);
+    expect(mocks.resolvePdsEndpoint).not.toHaveBeenCalled();
+  });
 });

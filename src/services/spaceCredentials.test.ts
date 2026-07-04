@@ -36,6 +36,18 @@ describe("spaceCredentials", () => {
     expect(parseJwtExp(jwt)).toBeGreaterThan(Date.now() + 3000 * 1000);
   });
 
+  it("parseJwtExp throws a labeled error on a malformed JWT", () => {
+    expect(() => parseJwtExp("not-a-jwt")).toThrow(
+      /getSpaceCredential returned a malformed credential JWT/,
+    );
+    expect(() => parseJwtExp("h..s")).toThrow(
+      /getSpaceCredential returned a malformed credential JWT/,
+    );
+    expect(() => parseJwtExp("h.not-base64-json.s")).toThrow(
+      /getSpaceCredential returned a malformed credential JWT/,
+    );
+  });
+
   it("exchanges delegation token for a credential", async () => {
     const credential = fakeJwt(7200);
     fetchMock

@@ -141,8 +141,8 @@ export async function listCommunityPosts(
   const ownerClient = await getSpaceClient(db, communityDid);
   const roster = await listMemberships(db, communityDid);
   const memberAuthors = roster
-    .map((m) => m.subject)
-    .filter((s) => s !== communityDid);
+    .filter((m) => m.status === "active" && m.subject !== communityDid)
+    .map((m) => m.subject);
 
   const perAuthor: CommunityPost[][] = [];
 
@@ -162,25 +162,34 @@ export async function listCommunityPosts(
   }
 
   // Member records live on each member's PDS; reads require a space credential.
+  // If the credential exchange itself fails, degrade gracefully to the
+  // community's own posts (already fetched above) rather than 500ing the feed.
   if (memberAuthors.length > 0) {
-    const credential = await getCommunitySpaceCredential(
-      db,
-      communityDid,
-      space,
-    );
-    for (const author of memberAuthors) {
-      try {
-        const pdsUrl = await resolvePdsEndpoint(author);
-        const client = SpaceClient.withToken(async () => credential, pdsUrl);
-        const values = await client.listRecordValues<PostRecord>(
-          space,
-          POST,
-          author,
-        );
-        perAuthor.push(values.map((r) => toCommunityPost(r, author)));
-      } catch (err) {
-        logger.warn({ err, author }, "failed to read member repo; skipping");
+    try {
+      const credential = await getCommunitySpaceCredential(
+        db,
+        communityDid,
+        space,
+      );
+      for (const author of memberAuthors) {
+        try {
+          const pdsUrl = await resolvePdsEndpoint(author);
+          const client = SpaceClient.withToken(async () => credential, pdsUrl);
+          const values = await client.listRecordValues<PostRecord>(
+            space,
+            POST,
+            author,
+          );
+          perAuthor.push(values.map((r) => toCommunityPost(r, author)));
+        } catch (err) {
+          logger.warn({ err, author }, "failed to read member repo; skipping");
+        }
       }
+    } catch (err) {
+      logger.warn(
+        { err, communityDid },
+        "failed to obtain community space credential; returning degraded feed (community posts only)",
+      );
     }
   }
 

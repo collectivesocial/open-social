@@ -21,7 +21,7 @@ import {
   listMembershipProofs,
   removeMembershipProof,
 } from "../src/services/membership";
-import { getCommunitySpace, getSpaceClient } from "../src/services/spaces";
+import { getCommunitySpace } from "../src/services/spaces";
 
 async function main() {
   const communityDid = process.argv[2];
@@ -58,11 +58,13 @@ async function main() {
     );
 
     if (space) {
-      const client = await getSpaceClient(db, communityDid);
-      const { members } = await client.listMembers(space);
+      // Space member lists (com.atproto.simplespace.listMembers) are no longer
+      // pre-materialized — recordMembership doesn't call addMember. Access is
+      // decided at credential-mint time via checkUserAccess against the
+      // membership/roles records above, not a static member list.
       console.log(
-        "4. space member list (com.atproto.simplespace.listMembers) ->",
-        JSON.stringify(members.map((m) => m.did)),
+        "4. space member list -> skipped (access is decided at credential-mint " +
+          "time via checkUserAccess, not a pre-materialized member list)",
       );
     }
 

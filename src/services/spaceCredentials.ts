@@ -22,10 +22,16 @@ export function clearCredentialCache(): void {
 }
 
 export function parseJwtExp(jwt: string): number {
-  const payload = JSON.parse(
-    Buffer.from(jwt.split(".")[1], "base64url").toString(),
-  );
-  return (payload.exp ?? 0) * 1000;
+  const segment = jwt.split(".")[1];
+  if (!segment) {
+    throw new Error("getSpaceCredential returned a malformed credential JWT");
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(segment, "base64url").toString());
+    return (payload.exp ?? 0) * 1000;
+  } catch {
+    throw new Error("getSpaceCredential returned a malformed credential JWT");
+  }
 }
 
 async function xrpcJson(

@@ -81,9 +81,19 @@ async function fetchCommunities(): Promise<
   return communities;
 }
 
+async function resolveHandleToDid(handle: string): Promise<string> {
+  const url = new URL(`${PDS}/xrpc/com.atproto.identity.resolveHandle`);
+  url.searchParams.set("handle", handle);
+  const res = await fetch(url);
+  expect(res.ok).toBe(true);
+  const { did } = await res.json();
+  return did;
+}
+
 describe("devnet: managing-app credential flow", () => {
   let communityDid: string;
   let postsSpace: string;
+  let memberDid: string;
 
   beforeAll(async () => {
     // did.json is served, identifying OpenSocial as the managing app.
@@ -113,6 +123,12 @@ describe("devnet: managing-app credential flow", () => {
     }
     postsSpace = postsSpaceRow.space_uri;
     expect(postsSpace).toBeTruthy();
+
+    // Resolve the seeded member's DID so the aggregated-posts assertion below
+    // can check that a member-authored (cross-repo) post actually made it into
+    // the feed, not just that the feed is non-empty.
+    memberDid = await resolveHandleToDid(MEMBER.handle);
+    expect(memberDid).toBeTruthy();
   });
 
   it("a member is authorized via checkUserAccess and receives a credential", async () => {
@@ -144,5 +160,11 @@ describe("devnet: managing-app credential flow", () => {
     ).then((r) => r.json().then((body) => body.posts));
     expect(Array.isArray(posts)).toBe(true);
     expect(posts.length).toBeGreaterThan(0);
+    // Not just non-empty: a real cross-repo read landed a post actually
+    // authored by the seeded member (read from the member's own PDS via a
+    // space credential), not only the community's own posts.
+    expect(posts.some((p: { author: string }) => p.author === memberDid)).toBe(
+      true,
+    );
   });
 });
