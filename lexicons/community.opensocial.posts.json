@@ -1,0 +1,13 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.posts",
+  "defs": {
+    "main": {
+      "type": "space",
+      "description": "A community's shared content space. Members write posts into their own permissioned repos within it.",
+      "key": "tid",
+      "name": "Community Posts",
+      "collections": ["community.opensocial.post"]
+    }
+  }
+}

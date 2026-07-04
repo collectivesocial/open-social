@@ -1,0 +1,20 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.post",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A post in a community's posts space, written into the author's own permissioned repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["text", "author", "createdAt"],
+        "properties": {
+          "text": { "type": "string", "maxLength": 3000, "maxGraphemes": 300 },
+          "author": { "type": "string", "format": "did" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

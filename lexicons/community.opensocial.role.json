@@ -1,0 +1,24 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.role",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A role definition within a community's management space. Record key is the role name.",
+      "key": "any",
+      "record": {
+        "type": "object",
+        "required": ["name", "displayName"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 100 },
+          "displayName": { "type": "string", "maxLength": 256 },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string", "maxLength": 100 }
+          },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}
