@@ -18,7 +18,6 @@ import type { Kysely } from "kysely";
 import type { Database } from "../db";
 import { createCommunityAgent } from "./atproto";
 import { getCommunitySpace, getSpaceClient } from "./spaces";
-import { actorCan } from "./roles";
 
 const MEMBERSHIP_PROOF = "community.opensocial.membershipProof";
 
@@ -149,8 +148,6 @@ export async function writeMembershipProof(
   const space = await getCommunitySpace(db, communityDid, "management");
   if (space) {
     const client = await getSpaceClient(db, communityDid);
-    // Grant the member access to the permissioned space, then record the proof.
-    await client.addMember(space, memberDid).catch(() => {});
     await client.createRecord(space, MEMBERSHIP_PROOF, record);
     return;
   }
@@ -271,10 +268,9 @@ export async function isMember(
 }
 
 /**
- * Record a membership (source of truth) and derive space access (dev-env shim):
- * every member is added to the posts space; admins (with the "manage"
- * capability) are additionally added to the admin-only management space.
- * Idempotent on subject. Call AFTER assigning roles so the admin check works.
+ * Record a membership (source of truth). Access is decided at credential-mint
+ * time via checkUserAccess; pre-materialization via space member lists is no
+ * longer needed. Idempotent on subject.
  */
 export async function recordMembership(
   db: Kysely<Database>,
@@ -283,7 +279,6 @@ export async function recordMembership(
   opts: { approvedBy?: string } = {},
 ): Promise<void> {
   const mgmt = await managementSpaceUri(db, communityDid);
-  const posts = await getCommunitySpace(db, communityDid, "posts");
   const client = await getSpaceClient(db, communityDid);
 
   const roster = await listMemberships(db, communityDid);
@@ -296,10 +291,4 @@ export async function recordMembership(
       ...(opts.approvedBy ? { approvedBy: opts.approvedBy } : {}),
     });
   }
-
-  // SHIM (delete when the protocol mint-callout lands): pre-materialize the
-  // access decision into the space member lists the dev-env mints from.
-  if (posts) await client.addMember(posts, subjectDid).catch(() => {});
-  const isAdmin = await actorCan(db, communityDid, subjectDid, "manage");
-  if (isAdmin) await client.addMember(mgmt, subjectDid).catch(() => {});
 }
