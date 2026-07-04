@@ -18,6 +18,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../db";
 import { createCommunityAgent } from "./atproto";
 import { getCommunitySpace, getSpaceClient } from "./spaces";
+import { createAuditLogService } from "./auditLog";
 
 const MEMBERSHIP_PROOF = "community.opensocial.membershipProof";
 
@@ -289,6 +290,12 @@ export async function recordMembership(
       status: "active",
       joinedAt: new Date().toISOString(),
       ...(opts.approvedBy ? { approvedBy: opts.approvedBy } : {}),
+    });
+    await createAuditLogService(db).log({
+      communityDid,
+      adminDid: opts.approvedBy ?? subjectDid,
+      action: "member.joined",
+      targetDid: subjectDid,
     });
   }
 }

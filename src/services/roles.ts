@@ -12,6 +12,7 @@
 import type { Kysely } from "kysely";
 import type { Database } from "../db";
 import { getCommunitySpace, getSpaceClient } from "./spaces";
+import { createAuditLogService } from "./auditLog";
 
 const ROLE = "community.opensocial.role";
 const ROLE_ASSIGNMENT = "community.opensocial.roleAssignment";
@@ -57,6 +58,12 @@ export async function writeRoleDefinition(
     capabilities,
     createdAt: new Date().toISOString(),
   });
+  await createAuditLogService(db).log({
+    communityDid,
+    adminDid: communityDid,
+    action: "role.created",
+    metadata: { name, capabilities },
+  });
 }
 
 /** Assign a role to a member (idempotent on subject+role). */
@@ -79,6 +86,13 @@ export async function assignRole(
     role: roleName,
     ...(assignedBy ? { assignedBy } : {}),
     createdAt: new Date().toISOString(),
+  });
+  await createAuditLogService(db).log({
+    communityDid,
+    adminDid: assignedBy ?? communityDid,
+    action: "role.assigned",
+    targetDid: subjectDid,
+    metadata: { role: roleName },
   });
 }
 

@@ -4,6 +4,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     getSpaceClient: vi.fn(),
     getCommunitySpace: vi.fn(),
+    logSpy: vi.fn(),
     client: {
       createRecord: vi.fn(),
       addMember: vi.fn(),
@@ -18,6 +19,9 @@ vi.mock("./spaces", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getSpaceClient: mocks.getSpaceClient,
   getCommunitySpace: mocks.getCommunitySpace,
+}));
+vi.mock("./auditLog", () => ({
+  createAuditLogService: () => ({ log: mocks.logSpy }),
 }));
 import { recordMembership } from "./membership";
 
@@ -58,5 +62,40 @@ describe("recordMembership (post-shim)", () => {
     ]);
     await recordMembership({} as any, "did:plc:comm", "did:plc:new");
     expect(mocks.client.createRecord).not.toHaveBeenCalled();
+  });
+
+  it("logs member.joined for a new member", async () => {
+    await recordMembership({} as any, "did:plc:comm", "did:plc:new", {
+      approvedBy: "did:plc:admin",
+    });
+    expect(mocks.logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        communityDid: "did:plc:comm",
+        adminDid: "did:plc:admin",
+        action: "member.joined",
+        targetDid: "did:plc:new",
+      }),
+    );
+  });
+
+  it("falls back adminDid to the subject when no approvedBy is given", async () => {
+    await recordMembership({} as any, "did:plc:comm", "did:plc:new");
+    expect(mocks.logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adminDid: "did:plc:new",
+      }),
+    );
+  });
+
+  it("does not log member.joined on the idempotent path", async () => {
+    mocks.client.listRecordValues.mockResolvedValue([
+      {
+        rkey: "1",
+        cid: "c",
+        value: { subject: "did:plc:new", status: "active", joinedAt: "x" },
+      },
+    ]);
+    await recordMembership({} as any, "did:plc:comm", "did:plc:new");
+    expect(mocks.logSpy).not.toHaveBeenCalled();
   });
 });
