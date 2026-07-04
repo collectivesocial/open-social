@@ -19,8 +19,6 @@ vi.mock("./spaces", async (importOriginal) => ({
   getSpaceClient: mocks.getSpaceClient,
   getCommunitySpace: mocks.getCommunitySpace,
 }));
-vi.mock("./roles", () => ({ actorCan: vi.fn(async () => true) }));
-
 import { recordMembership } from "./membership";
 
 describe("recordMembership (post-shim)", () => {

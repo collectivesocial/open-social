@@ -5,8 +5,8 @@
  * the single place that decides WHERE that proof lives:
  *
  *   - If the community has a provisioned management space (see
- *     `services/spaces.ts`), the proof is a record in that permissioned space
- *     and the member is added to the space's member list.
+ *     `services/spaces.ts`), the proof is a record in that permissioned space.
+ *     Space access is granted at credential-mint time via checkUserAccess.
  *   - Otherwise it falls back to the legacy location: a plain record in the
  *     community account's repo (com.atproto.repo.*).
  *
