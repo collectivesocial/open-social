@@ -235,7 +235,7 @@ export interface CommunitySpace {
   community_did: string;
   /** 'management' | 'posts' */
   kind: string;
-  /** The space URI returned by com.atproto.space.createSpace. */
+  /** The space URI returned by com.atproto.simplespace.createSpace. */
   space_uri: string;
   created_at: Generated<Date>;
 }

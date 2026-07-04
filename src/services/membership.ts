@@ -5,8 +5,8 @@
  * the single place that decides WHERE that proof lives:
  *
  *   - If the community has a provisioned management space (see
- *     `services/spaces.ts`), the proof is a record in that permissioned space
- *     and the member is added to the space's member list.
+ *     `services/spaces.ts`), the proof is a record in that permissioned space.
+ *     Space access is granted at credential-mint time via checkUserAccess.
  *   - Otherwise it falls back to the legacy location: a plain record in the
  *     community account's repo (com.atproto.repo.*).
  *
@@ -18,7 +18,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../db";
 import { createCommunityAgent } from "./atproto";
 import { getCommunitySpace, getSpaceClient } from "./spaces";
-import { actorCan } from "./roles";
+import { createAuditLogService } from "./auditLog";
 
 const MEMBERSHIP_PROOF = "community.opensocial.membershipProof";
 
@@ -149,8 +149,6 @@ export async function writeMembershipProof(
   const space = await getCommunitySpace(db, communityDid, "management");
   if (space) {
     const client = await getSpaceClient(db, communityDid);
-    // Grant the member access to the permissioned space, then record the proof.
-    await client.addMember(space, memberDid).catch(() => {});
     await client.createRecord(space, MEMBERSHIP_PROOF, record);
     return;
   }
@@ -271,10 +269,9 @@ export async function isMember(
 }
 
 /**
- * Record a membership (source of truth) and derive space access (dev-env shim):
- * every member is added to the posts space; admins (with the "manage"
- * capability) are additionally added to the admin-only management space.
- * Idempotent on subject. Call AFTER assigning roles so the admin check works.
+ * Record a membership (source of truth). Access is decided at credential-mint
+ * time via checkUserAccess; pre-materialization via space member lists is no
+ * longer needed. Idempotent on subject.
  */
 export async function recordMembership(
   db: Kysely<Database>,
@@ -283,7 +280,6 @@ export async function recordMembership(
   opts: { approvedBy?: string } = {},
 ): Promise<void> {
   const mgmt = await managementSpaceUri(db, communityDid);
-  const posts = await getCommunitySpace(db, communityDid, "posts");
   const client = await getSpaceClient(db, communityDid);
 
   const roster = await listMemberships(db, communityDid);
@@ -295,11 +291,11 @@ export async function recordMembership(
       joinedAt: new Date().toISOString(),
       ...(opts.approvedBy ? { approvedBy: opts.approvedBy } : {}),
     });
+    await createAuditLogService(db).log({
+      communityDid,
+      adminDid: opts.approvedBy ?? subjectDid,
+      action: "member.joined",
+      targetDid: subjectDid,
+    });
   }
-
-  // SHIM (delete when the protocol mint-callout lands): pre-materialize the
-  // access decision into the space member lists the dev-env mints from.
-  if (posts) await client.addMember(posts, subjectDid).catch(() => {});
-  const isAdmin = await actorCan(db, communityDid, subjectDid, "manage");
-  if (isAdmin) await client.addMember(mgmt, subjectDid).catch(() => {});
 }

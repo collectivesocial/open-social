@@ -12,10 +12,13 @@ import {
   getSpaceClient,
   getMemberSpaceClient,
   getCommunitySpace,
+  SpaceClient,
 } from "./spaces";
 import { isMember, listMemberships } from "./membership";
 import { actorCan } from "./roles";
 import { logger } from "../lib/logger";
+import { getCommunitySpaceCredential } from "./spaceCredentials";
+import { resolvePdsEndpoint } from "./atproto";
 
 const POST = "community.opensocial.post";
 
@@ -34,6 +37,25 @@ export interface CommunityPost {
   author: string;
   text: string;
   createdAt: string;
+}
+
+interface PostRecord {
+  text: string;
+  author?: string;
+  createdAt: string;
+}
+
+/** Map a `{rkey,cid,value}` space record to the `CommunityPost` shape. */
+function toCommunityPost(
+  r: { rkey: string; value: PostRecord },
+  fallbackAuthor: string,
+): CommunityPost {
+  return {
+    rkey: r.rkey,
+    author: r.value.author ?? fallbackAuthor,
+    text: r.value.text,
+    createdAt: r.value.createdAt,
+  };
 }
 
 /** Flatten per-author post lists and sort newest-first. Pure (unit-tested). */
@@ -116,32 +138,60 @@ export async function listCommunityPosts(
   communityDid: string,
 ): Promise<CommunityPost[]> {
   const space = await postsSpace(db, communityDid);
-  const client = await getSpaceClient(db, communityDid); // owner reads
+  const ownerClient = await getSpaceClient(db, communityDid);
   const roster = await listMemberships(db, communityDid);
-  const authors = [communityDid, ...roster.map((m) => m.subject)];
+  const memberAuthors = roster
+    .filter((m) => m.status === "active" && m.subject !== communityDid)
+    .map((m) => m.subject);
 
-  const perAuthor = await Promise.all(
-    authors.map(async (repo) => {
-      try {
-        const recs = await client.listRecordValues<{
-          text: string;
-          author?: string;
-          createdAt: string;
-        }>(space, POST, repo);
-        return recs.map((r) => ({
-          rkey: r.rkey,
-          author: r.value.author ?? repo,
-          text: r.value.text,
-          createdAt: r.value.createdAt,
-        }));
-      } catch (err) {
-        // A single member's repo being unreadable shouldn't break the feed.
-        // Logged because, until the cross-repo read path is validated live,
-        // this catch could mask the owner-reads-member-repos assumption failing.
-        logger.warn({ err, communityDid, repo }, "Failed to read member posts");
-        return [] as CommunityPost[];
+  const perAuthor: CommunityPost[][] = [];
+
+  // Community's own records: read with its own session on its own PDS.
+  try {
+    const own = await ownerClient.listRecordValues<PostRecord>(
+      space,
+      POST,
+      communityDid,
+    );
+    perAuthor.push(own.map((r) => toCommunityPost(r, communityDid)));
+  } catch (err) {
+    logger.warn(
+      { err, author: communityDid },
+      "failed to read community's own posts",
+    );
+  }
+
+  // Member records live on each member's PDS; reads require a space credential.
+  // If the credential exchange itself fails, degrade gracefully to the
+  // community's own posts (already fetched above) rather than 500ing the feed.
+  if (memberAuthors.length > 0) {
+    try {
+      const credential = await getCommunitySpaceCredential(
+        db,
+        communityDid,
+        space,
+      );
+      for (const author of memberAuthors) {
+        try {
+          const pdsUrl = await resolvePdsEndpoint(author);
+          const client = SpaceClient.withToken(async () => credential, pdsUrl);
+          const values = await client.listRecordValues<PostRecord>(
+            space,
+            POST,
+            author,
+          );
+          perAuthor.push(values.map((r) => toCommunityPost(r, author)));
+        } catch (err) {
+          logger.warn({ err, author }, "failed to read member repo; skipping");
+        }
       }
-    }),
-  );
+    } catch (err) {
+      logger.warn(
+        { err, communityDid },
+        "failed to obtain community space credential; returning degraded feed (community posts only)",
+      );
+    }
+  }
+
   return aggregateAndSortPosts(perAuthor);
 }

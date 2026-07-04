@@ -1,0 +1,21 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.roleAssignment",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Assignment of a role to a subject DID, in the management space.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["subject", "role", "createdAt"],
+        "properties": {
+          "subject": { "type": "string", "format": "did" },
+          "role": { "type": "string", "maxLength": 100 },
+          "assignedBy": { "type": "string", "format": "did" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

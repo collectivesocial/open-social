@@ -25,6 +25,7 @@ import {
   resolvePdsEndpoint,
 } from "./atproto";
 import { logger } from "../lib/logger";
+import { config } from "../config";
 
 /** Space type NSIDs. Declared as `type: space` lexicons for the PoC. */
 export const MANAGEMENT_SPACE_TYPE = "community.opensocial.management";
@@ -36,6 +37,19 @@ const SPACE_TYPE_BY_KIND: Record<SpaceKind, string> = {
   management: MANAGEMENT_SPACE_TYPE,
   posts: POSTS_SPACE_TYPE,
 };
+
+/** Membership/read policy for a space, set at creation via `SpaceConfig`. */
+export type SimplespacePolicy = "public" | "member-list" | "managing-app";
+
+export type SpaceAppAccess =
+  | { $type: "com.atproto.simplespace.defs#open" }
+  | { $type: "com.atproto.simplespace.defs#allowList"; allowed: string[] };
+
+export interface SpaceConfig {
+  policy: SimplespacePolicy;
+  appAccess: SpaceAppAccess;
+  managingApp?: string;
+}
 
 export class SpaceXrpcError extends Error {
   constructor(
@@ -71,21 +85,52 @@ export interface SpaceRecordRef {
 }
 
 /**
- * Thin authenticated client for com.atproto.space.* on a single community's
- * PDS. Construct via {@link getSpaceClient}.
+ * Thin authenticated client for com.atproto.space.* (record CRUD) and
+ * com.atproto.simplespace.* (space/membership management) on a single
+ * community's PDS. Construct via {@link getSpaceClient}, or via
+ * {@link SpaceClient.withToken} to authenticate with a space-credential JWT
+ * instead of an agent session (e.g. a member reading with a scoped token).
  */
 export class SpaceClient {
+  private agent: BskyAgent | null = null;
+  private getToken: () => Promise<string>;
+
   constructor(
-    private agent: BskyAgent,
+    agent: BskyAgent | null,
     private pdsUrl: string,
-  ) {}
+    tokenProvider?: () => Promise<string>,
+  ) {
+    if (tokenProvider) {
+      this.getToken = tokenProvider;
+    } else if (agent) {
+      this.agent = agent;
+      this.getToken = async () => {
+        const token = (agent as any).session?.accessJwt as string | undefined;
+        if (!token) throw new Error("community agent has no active session");
+        return token;
+      };
+    } else {
+      throw new Error("SpaceClient needs an agent or a token provider");
+    }
+  }
+
+  /**
+   * Build a SpaceClient authenticated with a space-credential JWT rather than
+   * an agent session. Token clients have no known DID, so record methods must
+   * be called with `repo` explicit (see {@link ownDid}).
+   */
+  static withToken(
+    getToken: () => Promise<string>,
+    pdsUrl: string,
+  ): SpaceClient {
+    return new SpaceClient(null, pdsUrl, getToken);
+  }
 
   private async call<T = any>(
     nsid: string,
     opts: SpaceXrpcOptions,
   ): Promise<T | undefined> {
-    const token = (this.agent as any).session?.accessJwt as string | undefined;
-    if (!token) throw new Error("community agent has no active session");
+    const token = await this.getToken();
 
     const url = new URL(`/xrpc/${nsid}`, this.pdsUrl);
     if (opts.params) {
@@ -119,19 +164,31 @@ export class SpaceClient {
     ownerDid: string,
     type: string,
     skey?: string,
+    config?: SpaceConfig,
   ): Promise<{ uri: string }> {
-    return (await this.call("com.atproto.space.createSpace", {
-      method: "POST",
-      body: { did: ownerDid, type, ...(skey ? { skey } : {}) },
-    })) as { uri: string };
+    const body: Record<string, unknown> = { did: ownerDid, type };
+    if (skey) body.skey = skey;
+    if (config) body.config = config;
+    const res = await this.call<{ uri: string }>(
+      "com.atproto.simplespace.createSpace",
+      { method: "POST", body },
+    );
+    if (!res) throw new Error("createSpace returned no body");
+    return res;
   }
 
   /**
    * DID of the authenticated account (the community). com.atproto.space.*
    * record methods all require a `repo` — the repo within the space to act on —
-   * which defaults to the community's own repo.
+   * which defaults to the community's own repo. Clients built via
+   * {@link SpaceClient.withToken} have no agent session, so they must always
+   * pass `repo` explicitly.
    */
   private ownDid(): string {
+    if (!this.agent)
+      throw new Error(
+        "SpaceClient built with withToken() has no DID; pass `repo` explicitly",
+      );
     const did = (this.agent as any).session?.did as string | undefined;
     if (!did) throw new Error("community agent has no active session");
     return did;
@@ -245,20 +302,20 @@ export class SpaceClient {
   }
 
   async addMember(space: string, did: string): Promise<void> {
-    await this.call("com.atproto.space.addMember", {
+    await this.call("com.atproto.simplespace.addMember", {
       method: "POST",
       body: { space, did },
     });
   }
 
-  async getMembers(
+  async listMembers(
     space: string,
     opts: { limit?: number; cursor?: string } = {},
   ): Promise<{ members: Array<{ did: string }>; cursor?: string }> {
     const res = await this.call<{
       members: Array<{ did: string }>;
       cursor?: string;
-    }>("com.atproto.space.getMembers", {
+    }>("com.atproto.simplespace.listMembers", {
       method: "GET",
       params: { space, limit: opts.limit, cursor: opts.cursor },
     });
@@ -300,6 +357,20 @@ export async function getMemberSpaceClient(
 }
 
 /**
+ * Build the {@link SpaceConfig} that delegates a space's credential/access
+ * decisions to OpenSocial (the managing app) rather than to the space's own
+ * open/allow-list membership. Used by {@link provisionCommunitySpaces} so
+ * newly created spaces route access checks through `checkUserAccess`.
+ */
+export function buildManagedSpaceConfig(serviceId: string): SpaceConfig {
+  return {
+    policy: "managing-app",
+    appAccess: { $type: "com.atproto.simplespace.defs#open" },
+    managingApp: serviceId,
+  };
+}
+
+/**
  * Ensure the community's management + posts spaces exist, creating any that
  * are missing. Idempotent: provisioned space URIs are recorded in
  * `community_spaces`.
@@ -320,12 +391,23 @@ export async function provisionCommunitySpaces(
   const client = await getSpaceClient(db, communityDid);
   const result = {} as Record<SpaceKind, string>;
 
+  const spaceConfig = config.serviceId
+    ? buildManagedSpaceConfig(config.serviceId)
+    : undefined;
+  if (!spaceConfig) {
+    logger.warn(
+      "OPENSOCIAL_SERVICE_DID unset — provisioning spaces with host default policy (member-list)",
+    );
+  }
+
   for (const kind of Object.keys(SPACE_TYPE_BY_KIND) as SpaceKind[]) {
     let uri = byKind.get(kind);
     if (!uri) {
       const created = await client.createSpace(
         communityDid,
         SPACE_TYPE_BY_KIND[kind],
+        undefined,
+        spaceConfig,
       );
       uri = created.uri;
       await db
@@ -339,6 +421,26 @@ export async function provisionCommunitySpaces(
   }
 
   return result;
+}
+
+/** Look up a provisioned space's owning community + kind by its URI, or null. */
+export async function getCommunitySpaceByUri(
+  db: Kysely<Database>,
+  spaceUri: string,
+): Promise<{
+  community_did: string;
+  kind: SpaceKind;
+  space_uri: string;
+} | null> {
+  const row = await db
+    .selectFrom("community_spaces")
+    .select(["community_did", "kind", "space_uri"])
+    .where("space_uri", "=", spaceUri)
+    .executeTakeFirst();
+  return (
+    (row as { community_did: string; kind: SpaceKind; space_uri: string }) ??
+    null
+  );
 }
 
 /** Look up a provisioned space URI for a community, or null if not provisioned. */

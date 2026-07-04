@@ -4,21 +4,16 @@
   "defs": {
     "main": {
       "type": "record",
-      "description": "User's membership in a community (stored in user's repo)",
+      "description": "Roster source of truth: one membership record per member, authored by the community DID in the management space.",
       "key": "tid",
       "record": {
         "type": "object",
-        "required": ["community", "joinedAt"],
+        "required": ["subject", "status", "joinedAt"],
         "properties": {
-          "community": {
-            "type": "string",
-            "format": "did",
-            "description": "DID of the community"
-          },
-          "joinedAt": {
-            "type": "string",
-            "format": "datetime"
-          }
+          "subject": { "type": "string", "format": "did" },
+          "status": { "type": "string", "enum": ["active", "pending"] },
+          "joinedAt": { "type": "string", "format": "datetime" },
+          "approvedBy": { "type": "string", "format": "did" }
         }
       }
     }

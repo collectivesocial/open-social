@@ -1,0 +1,19 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.management",
+  "defs": {
+    "main": {
+      "type": "space",
+      "description": "A community's governance space: roster, roles, and admin records. Portable across management apps.",
+      "key": "tid",
+      "name": "Community Management",
+      "collections": [
+        "community.opensocial.membership",
+        "community.opensocial.role",
+        "community.opensocial.roleAssignment",
+        "community.opensocial.membershipProof",
+        "community.opensocial.auditLogEntry"
+      ]
+    }
+  }
+}

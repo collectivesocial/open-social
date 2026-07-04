@@ -1,0 +1,23 @@
+{
+  "lexicon": 1,
+  "id": "community.opensocial.auditLogEntry",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An append-only audit log entry in a community's management space. Mirrors the management app's audit trail so it is portable across management apps.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["actor", "action", "createdAt"],
+        "properties": {
+          "actor": { "type": "string", "format": "did" },
+          "action": { "type": "string", "maxLength": 100 },
+          "target": { "type": "string", "format": "did" },
+          "reason": { "type": "string", "maxLength": 2048 },
+          "metadata": { "type": "unknown" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}
