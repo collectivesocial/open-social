@@ -13,6 +13,7 @@ import { createCommunityRouter } from "./routes/communities";
 import { createMemberRouter } from "./routes/members";
 import { createRecordsRouter } from "./routes/records";
 import { createContentRouter } from "./routes/content";
+import { createAnnouncementsRouter } from "./routes/announcements";
 import { createWebhookRouter } from "./routes/webhooks";
 import { createStreamRouter } from "./routes/stream";
 import { createPermissionsRouter } from "./routes/permissions";
@@ -121,6 +122,10 @@ async function start() {
     app.use(
       "/api/v1/communities/:did/content",
       createContentRouter(oauthClient, db),
+    );
+    app.use(
+      "/api/v1/communities/:did/announcements",
+      createAnnouncementsRouter(oauthClient, db),
     );
     app.use("/api/v1/communities", createPermissionsRouter(db));
     app.use("/api/v1/communities", createHierarchyRouter(db));
