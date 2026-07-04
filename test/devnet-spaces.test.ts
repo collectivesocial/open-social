@@ -102,8 +102,15 @@ describe("devnet: managing-app credential flow", () => {
     const { spaces } = await fetch(
       `${APP}/api/poc/communities/${encodeURIComponent(communityDid)}/spaces`,
     ).then((r) => r.json());
-    const postsSpaceRow =
-      spaces.find((s: { kind: string }) => s.kind === "posts") ?? spaces[0];
+    const postsSpaceRow = spaces.find(
+      (s: { kind: string }) => s.kind === "posts",
+    );
+    if (!postsSpaceRow) {
+      throw new Error(
+        `No space with kind "posts" for ${communityDid} — re-run seed:devenv. ` +
+          `Got: ${JSON.stringify(spaces)}`,
+      );
+    }
     postsSpace = postsSpaceRow.space_uri;
     expect(postsSpace).toBeTruthy();
   });
@@ -111,13 +118,24 @@ describe("devnet: managing-app credential flow", () => {
   it("a member is authorized via checkUserAccess and receives a credential", async () => {
     const session = await createSession(MEMBER.handle, MEMBER.password);
     const result = await mintCredential(session, postsSpace);
-    expect(result.ok).toBe(true);
+    expect(result.ok, `mint failed: ${JSON.stringify(result)}`).toBe(true);
+    if (result.ok) {
+      // A real space-credential JWT, not just any truthy body.
+      expect(typeof result.credential).toBe("string");
+      expect(result.credential.length).toBeGreaterThan(0);
+    }
   });
 
   it("a non-member is denied a credential", async () => {
     const session = await createSession(NON_MEMBER.handle, NON_MEMBER.password);
     const result = await mintCredential(session, postsSpace);
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // The specific managing-app denial from the PDS — not just any failure
+      // (a 500 from a broken flow must not pass this test).
+      expect(result.status).toBe(400);
+      expect(result.body).toMatch(/UserNotAuthorized/);
+    }
   });
 
   it("aggregated posts include member-authored posts (credential-based cross-repo read)", async () => {
