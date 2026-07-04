@@ -2,6 +2,9 @@ import type { Kysely } from "kysely";
 import type { Database } from "../db";
 import { decodeCursor, encodeCursor } from "../lib/pagination";
 import { logger } from "../lib/logger";
+import { getCommunitySpace, getSpaceClient } from "./spaces";
+
+export const AUDIT_LOG_ENTRY = "community.opensocial.auditLogEntry";
 
 export type AuditAction =
   | "member.joined"
@@ -64,6 +67,51 @@ export function createAuditLogService(db: Kysely<Database>) {
           action: params.action,
         },
         "Failed to write audit log",
+      );
+    }
+
+    await writeSpaceEntry(params);
+  }
+
+  async function writeSpaceEntry(params: {
+    communityDid: string;
+    adminDid: string;
+    action: AuditAction;
+    targetDid?: string;
+    reason?: string;
+    metadata?: Record<string, any>;
+  }) {
+    try {
+      const mgmt = await getCommunitySpace(
+        db,
+        params.communityDid,
+        "management",
+      );
+      if (!mgmt) {
+        logger.debug(
+          { communityDid: params.communityDid, action: params.action },
+          "no management space; skipping space audit entry",
+        );
+        return;
+      }
+      const client = await getSpaceClient(db, params.communityDid);
+      await client.createRecord(mgmt, AUDIT_LOG_ENTRY, {
+        $type: AUDIT_LOG_ENTRY,
+        actor: params.adminDid,
+        action: params.action,
+        ...(params.targetDid ? { target: params.targetDid } : {}),
+        ...(params.reason ? { reason: params.reason } : {}),
+        ...(params.metadata ? { metadata: params.metadata } : {}),
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.warn(
+        {
+          error: err,
+          communityDid: params.communityDid,
+          action: params.action,
+        },
+        "Failed to write audit log entry to management space",
       );
     }
   }
