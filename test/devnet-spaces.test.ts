@@ -18,10 +18,47 @@ const APP = process.env.APP_URL ?? "http://localhost:3001";
 
 // Keep in sync with scripts/seed-devenv-community.ts:
 const COMMUNITY = { handle: "democommunity.test" };
+const ADMIN = { handle: "osadmin.test", password: "admin-devenv-pass" };
 const MEMBER = { handle: "osmember.test", password: "member-devenv-pass" };
 // alice.test is seeded by the atproto dev-env itself (bin-multi-pds.ts) and is
 // never added to the community's roster, so it's a reliable non-member.
 const NON_MEMBER = { handle: "alice.test", password: "alice-pass" };
+
+// Keep in sync with the AuditAction union in src/services/auditLog.ts — used
+// only to confirm a live record's `value.action` is a real audit action, not
+// to exhaustively validate every possible action.
+const KNOWN_AUDIT_ACTIONS = [
+  "member.joined",
+  "member.approved",
+  "member.rejected",
+  "member.removed",
+  "member.left",
+  "admin.promoted",
+  "admin.demoted",
+  "admin.transferred",
+  "community.created",
+  "community.deleted",
+  "community.updated",
+  "banner.uploaded",
+  "avatar.uploaded",
+  "settings.updated",
+  "app.visibility.enabled",
+  "app.visibility.disabled",
+  "app.visibility.pending",
+  "collection.permission.updated",
+  "collection.permission.deleted",
+  "role.created",
+  "role.updated",
+  "role.deleted",
+  "role.assigned",
+  "role.revoked",
+  "hierarchy.requested",
+  "hierarchy.invited",
+  "hierarchy.approved",
+  "hierarchy.accepted",
+  "hierarchy.rejected",
+  "hierarchy.revoked",
+];
 
 async function createSession(
   identifier: string,
@@ -90,8 +127,13 @@ async function resolveHandleToDid(handle: string): Promise<string> {
   return did;
 }
 
+// Shared across both describe blocks below (populated in the first
+// describe's beforeAll, which runs before either describe's tests since
+// vitest executes top-level describes in file order).
+let communityDid: string;
+let managementSpace: string;
+
 describe("devnet: managing-app credential flow", () => {
-  let communityDid: string;
   let postsSpace: string;
   let memberDid: string;
 
@@ -123,6 +165,18 @@ describe("devnet: managing-app credential flow", () => {
     }
     postsSpace = postsSpaceRow.space_uri;
     expect(postsSpace).toBeTruthy();
+
+    const managementSpaceRow = spaces.find(
+      (s: { kind: string }) => s.kind === "management",
+    );
+    if (!managementSpaceRow) {
+      throw new Error(
+        `No space with kind "management" for ${communityDid} — re-run seed:devenv. ` +
+          `Got: ${JSON.stringify(spaces)}`,
+      );
+    }
+    managementSpace = managementSpaceRow.space_uri;
+    expect(managementSpace).toBeTruthy();
 
     // Resolve the seeded member's DID so the aggregated-posts assertion below
     // can check that a member-authored (cross-repo) post actually made it into
@@ -166,5 +220,46 @@ describe("devnet: managing-app credential flow", () => {
     expect(posts.some((p: { author: string }) => p.author === memberDid)).toBe(
       true,
     );
+  });
+});
+
+describe("devnet: management-space audit entries", () => {
+  it("an admin mints a management-space credential and reads auditLogEntry records", async () => {
+    const session = await createSession(ADMIN.handle, ADMIN.password);
+    const result = await mintCredential(session, managementSpace);
+    expect(result.ok, `mint failed: ${JSON.stringify(result)}`).toBe(true);
+    if (!result.ok) return;
+
+    const url = new URL(`${PDS}/xrpc/com.atproto.space.listRecords`);
+    url.searchParams.set("space", managementSpace);
+    url.searchParams.set("repo", communityDid);
+    url.searchParams.set("collection", "community.opensocial.auditLogEntry");
+    const res = await fetch(url, {
+      headers: { authorization: `Bearer ${result.credential}` },
+    });
+    expect(res.ok).toBe(true);
+    const body = await res.json();
+    expect(Array.isArray(body.records)).toBe(true);
+    expect(body.records.length).toBeGreaterThan(0);
+
+    // Unlike the SpaceClient wrapper's own listRecords (which only fetches
+    // {collection, rkey, cid} and hydrates values via a separate getRecord
+    // call), the raw com.atproto.space.listRecords response observed live
+    // against the devnet PDS inlines the full record `value` on each entry —
+    // so we can assert directly on it without a follow-up getRecord round trip.
+    const record = body.records[0];
+    expect(record.value).toBeTruthy();
+    expect(record.value.$type).toBe("community.opensocial.auditLogEntry");
+    expect(KNOWN_AUDIT_ACTIONS).toContain(record.value.action);
+  });
+
+  it("a non-admin member is denied a management-space credential", async () => {
+    const session = await createSession(MEMBER.handle, MEMBER.password);
+    const result = await mintCredential(session, managementSpace);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(400);
+      expect(result.body).toMatch(/UserNotAuthorized/);
+    }
   });
 });
