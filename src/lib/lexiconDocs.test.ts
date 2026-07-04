@@ -13,6 +13,7 @@ describe("loadLexiconDocs", () => {
       "community.opensocial.roleAssignment",
       "community.opensocial.membership",
       "community.opensocial.post",
+      "community.opensocial.auditLogEntry",
     ]) {
       expect(ids).toContain(required);
     }
@@ -29,5 +30,8 @@ describe("loadLexiconDocs", () => {
       "community.opensocial.membership",
     );
     expect(mgmt.defs.main.collections).toContain("community.opensocial.role");
+    expect(mgmt.defs.main.collections).toContain(
+      "community.opensocial.auditLogEntry",
+    );
   });
 });

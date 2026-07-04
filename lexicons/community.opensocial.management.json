@@ -11,7 +11,8 @@
         "community.opensocial.membership",
         "community.opensocial.role",
         "community.opensocial.roleAssignment",
-        "community.opensocial.membershipProof"
+        "community.opensocial.membershipProof",
+        "community.opensocial.auditLogEntry"
       ]
     }
   }
