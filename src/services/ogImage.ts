@@ -131,7 +131,9 @@ async function renderCard(opts: {
     },
     [
       opts.avatar,
-      el("div", { display: "flex", flexDirection: "column", flexGrow: 1 }, [
+      // Fixed width so the headline wraps/clamps inside the padded content
+      // area: 1200 − 2×96 padding − 300 avatar − 72 gap = 636.
+      el("div", { display: "flex", flexDirection: "column", width: 636 }, [
         el(
           "div",
           {
@@ -153,6 +155,8 @@ async function renderCard(opts: {
             color: HEADLINE_COLOR,
             lineHeight: 1.15,
             letterSpacing: "-0.02em",
+            // Satori only clamps block elements with a single string child.
+            display: "block",
             lineClamp: 2,
           },
           opts.headline,
