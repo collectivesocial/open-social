@@ -34,6 +34,11 @@ describe("preferJpegCdnUrl", () => {
     expect(preferJpegCdnUrl(url)).toBe(url);
   });
 
+  it("leaves cdn URLs with an @webp suffix alone (no @webp@jpeg)", () => {
+    const url = "https://cdn.bsky.app/img/avatar/plain/did:plc:x/bafyabc@webp";
+    expect(preferJpegCdnUrl(url)).toBe(url);
+  });
+
   it("leaves non-CDN URLs alone", () => {
     const url =
       "https://pds.example.com/xrpc/com.atproto.sync.getBlob?did=x&cid=y";
@@ -100,6 +105,16 @@ describe("fetchAvatarAsDataUri", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "https://cdn.bsky.app/img/avatar/plain/did:plc:x/bafyabc@jpeg",
       expect.anything(),
+    );
+  });
+
+  it("fetches with redirect: 'error' so an allowlisted host can't redirect elsewhere", async () => {
+    const fetchMock = mockFetchOk(JPEG_BYTES);
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchAvatarAsDataUri("https://example.com/a.jpg");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/a.jpg",
+      expect.objectContaining({ redirect: "error" }),
     );
   });
 });

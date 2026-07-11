@@ -32,12 +32,21 @@ function appBaseUrl(): string {
 /**
  * Public OG share-card endpoints, consumed by link-preview crawlers.
  * No auth: crawlers have no session, and the data shown is already public.
+ *
+ * These routes are unauthenticated and each request can trigger DB + PLC +
+ * PDS + Bluesky lookups (uncached on `/share`), so an optional rate limiter
+ * can be supplied to guard against amplification abuse.
  */
-export function createOgRouter(db: Kysely<Database>): Router {
+export function createOgRouter(
+  db: Kysely<Database>,
+  rateLimiter?: express.RequestHandler,
+): Router {
   const router = express.Router();
+  const middlewares = rateLimiter ? [rateLimiter] : [];
 
   router.get(
     "/communities/:did/og-image",
+    ...middlewares,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const did = decodeURIComponent(req.params.did);
@@ -81,6 +90,7 @@ export function createOgRouter(db: Kysely<Database>): Router {
 
   router.get(
     "/communities/:did/share",
+    ...middlewares,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const did = decodeURIComponent(req.params.did);

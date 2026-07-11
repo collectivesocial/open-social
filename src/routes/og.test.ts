@@ -163,3 +163,25 @@ describe("GET /communities/:did/share", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("optional rate limiter", () => {
+  it("is invoked for both og-image and share requests when supplied", async () => {
+    vi.mocked(getCommunityCardData).mockResolvedValue({ displayName: "Test" });
+    const rateLimiter = vi.fn((req: any, res: any, next: any) => next());
+
+    const app = express();
+    app.use(createOgRouter({} as any, rateLimiter));
+
+    const imageDid = "did:plc:ratelimit000000000000001";
+    await supertest(app).get(
+      `/communities/${encodeURIComponent(imageDid)}/og-image`,
+    );
+    expect(rateLimiter).toHaveBeenCalledTimes(1);
+
+    const shareDid = "did:plc:ratelimit000000000000002";
+    await supertest(app).get(
+      `/communities/${encodeURIComponent(shareDid)}/share`,
+    );
+    expect(rateLimiter).toHaveBeenCalledTimes(2);
+  });
+});

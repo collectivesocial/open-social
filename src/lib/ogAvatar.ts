@@ -7,7 +7,7 @@ import { logger } from "./logger";
 export function preferJpegCdnUrl(url: string): string {
   try {
     const u = new URL(url);
-    if (u.hostname === "cdn.bsky.app" && !/@(jpeg|png)$/.test(u.pathname)) {
+    if (u.hostname === "cdn.bsky.app" && !/@\w+$/.test(u.pathname)) {
       return `${u.origin}${u.pathname}@jpeg${u.search}`;
     }
   } catch {
@@ -60,6 +60,10 @@ export async function fetchAvatarAsDataUri(
   try {
     const res = await fetch(preferJpegCdnUrl(url), {
       signal: controller.signal,
+      // Even an allowlisted host shouldn't be able to redirect this
+      // server-side fetch elsewhere (SSRF via open redirect). Treat a
+      // redirect as a failure and fall back to the monogram card.
+      redirect: "error",
     });
     if (!res.ok) return undefined;
     const buf = Buffer.from(await res.arrayBuffer());

@@ -107,8 +107,9 @@ async function start() {
     // Auth routes (OAuth)
     app.use(createAuthRouter(oauthClient, db));
 
-    // Public OG share-card endpoints (no auth — consumed by link-preview crawlers)
-    app.use(createOgRouter(db));
+    // Public OG share-card endpoints (no auth — consumed by link-preview crawlers).
+    // Rate-limited: each request can trigger DB + PLC + PDS + Bluesky calls.
+    app.use(createOgRouter(db, rateLimiter));
 
     // API routes
     app.get("/health", (req, res) => {
