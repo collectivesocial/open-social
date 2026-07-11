@@ -130,6 +130,19 @@ describe("GET /communities/:did/share", () => {
     expect(res.text).not.toContain("<Roll>");
   });
 
+  it("escapes host-derived og:image URLs against Host-header injection", async () => {
+    vi.mocked(getCommunityCardData).mockResolvedValue({ displayName: "Test" });
+
+    const res = await supertest(buildApp())
+      .get(`/communities/${ENCODED}/share`)
+      .set("Host", 'evil.example"><script>alert(1)</script>');
+
+    expect(res.status).toBe(200);
+    // The raw Host header must never break out of the attribute.
+    expect(res.text).not.toContain('"><script>');
+    expect(res.text).toContain("&quot;&gt;&lt;script&gt;");
+  });
+
   it("uses the fallback description when the community has none", async () => {
     vi.mocked(getCommunityCardData).mockResolvedValue({
       displayName: "Quiet Club",
