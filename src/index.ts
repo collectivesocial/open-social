@@ -19,6 +19,7 @@ import { createStreamRouter } from "./routes/stream";
 import { createPermissionsRouter } from "./routes/permissions";
 import { createHierarchyRouter } from "./routes/hierarchy";
 import { createEventsRouter } from "./routes/events";
+import { createOgRouter } from "./routes/og";
 import { createXrpcRouter } from "./xrpc/server";
 import { createRateLimiter } from "./middleware/rateLimit";
 import { csrfProtection } from "./middleware/csrf";
@@ -105,6 +106,10 @@ async function start() {
 
     // Auth routes (OAuth)
     app.use(createAuthRouter(oauthClient, db));
+
+    // Public OG share-card endpoints (no auth — consumed by link-preview crawlers).
+    // Rate-limited: each request can trigger DB + PLC + PDS + Bluesky calls.
+    app.use(createOgRouter(db, rateLimiter));
 
     // API routes
     app.get("/health", (req, res) => {
