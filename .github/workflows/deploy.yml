@@ -35,6 +35,6 @@ jobs:
                   docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/open-social:${{ github.sha }}
             - run: |
                   az containerapp update \
-                    --name open-social \
+                    --name open-social-2 \
                     --resource-group open-collective-social \
                     --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/open-social:${{ github.sha }}
