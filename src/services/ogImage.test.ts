@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { renderCommunityCard, renderDefaultCard } from "./ogImage";
+import {
+  buildCommunityCardTree,
+  renderCommunityCard,
+  renderDefaultCard,
+} from "./ogImage";
 
 // A minimal valid 1x1 white JPEG for the avatar-embedding path.
 const TINY_JPEG_DATA_URI =
@@ -47,6 +51,38 @@ describe("renderCommunityCard", () => {
       displayName: 'Rock & <Roll> "Club"',
     });
     expectValidCardPng(buf);
+  });
+});
+
+describe("buildCommunityCardTree (headline overflow regression guard)", () => {
+  // This test intentionally pins the layout mechanism that prevents the
+  // headline from overflowing the canvas: the text column must have the
+  // exact derived width (canvas minus padding, avatar, and gap), and the
+  // headline must combine display: "block" with lineClamp — satori only
+  // applies lineClamp to block elements, so dropping either silently
+  // reintroduces the overflow. Indexing into the known tree shape is
+  // deliberate; if the layout structure changes, update this test alongside.
+  it("pins the fixed-width text column and block/lineClamp headline", () => {
+    const tree = buildCommunityCardTree({
+      displayName:
+        "The Extremely Long-Winded Society of People Who Never Abbreviate Anything At All Ever",
+    });
+
+    // Root children: [avatar, text column, bottom accent bar]
+    const children = tree.props.children as Array<{
+      props: { style: Record<string, unknown>; children?: unknown };
+    }>;
+    const textColumn = children[1];
+    expect(textColumn.props.style.width).toBe(1200 - 2 * 96 - 300 - 72);
+
+    // Text column children: [eyebrow, headline, subline]
+    const columnChildren = textColumn.props.children as Array<{
+      props: { style: Record<string, unknown>; children?: unknown };
+    }>;
+    const headline = columnChildren[1];
+    expect(headline.props.children).toContain("Extremely Long-Winded");
+    expect(headline.props.style.display).toBe("block");
+    expect(headline.props.style.lineClamp).toBe(2);
   });
 });
 
