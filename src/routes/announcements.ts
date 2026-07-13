@@ -16,6 +16,7 @@ import {
   satisfiesRole,
   type Operation,
 } from "../services/permissions";
+import { enforceSpaceBoundary } from "../services/spaces";
 import { logger } from "../lib/logger";
 import { z } from "zod";
 
@@ -177,6 +178,21 @@ export function createAnnouncementsRouter(
       res.status(403).json({
         error: `Insufficient permissions. Required role: ${effectiveRequiredRole}`,
       });
+      return null;
+    }
+
+    // Space boundary: announcements belong to the 'announcements' space,
+    // so admin-tightened space policies (e.g. invite-only) apply here too.
+    const boundary = await enforceSpaceBoundary(
+      db,
+      communityDid,
+      ANNOUNCEMENT_COLLECTION,
+      operation,
+      userDid,
+      userRoles,
+    );
+    if (!boundary.allowed) {
+      res.status(403).json({ error: boundary.reason });
       return null;
     }
 

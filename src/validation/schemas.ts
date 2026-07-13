@@ -375,3 +375,73 @@ export const revokeRoleSchema = z.object({
   memberDid: didSchema,
   roleName: z.string().min(1),
 });
+
+// ─── Space schemas (permissioned data Phase 1) ────────────────────────
+
+export const spaceKeySchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(
+    /^[a-z0-9][a-z0-9-]*$/,
+    "Space key must be lowercase alphanumeric with hyphens",
+  );
+
+/** 'public' | 'member' | 'admin' | 'invite' | custom role name */
+export const spaceReadAccessSchema = z
+  .enum(["public", "member", "admin", "invite"])
+  .or(z.string().min(1).max(100));
+
+/** 'member' | 'admin' | custom role name — 'public'/'invite' make no sense for writes */
+export const spaceWriteAccessSchema = z.enum(["member", "admin"]).or(
+  z
+    .string()
+    .min(1)
+    .max(100)
+    .refine((v) => v !== "public" && v !== "invite", {
+      message: "writeAccess must be 'member', 'admin', or a custom role name",
+    }),
+);
+
+export const createSpaceSchema = z.object({
+  adminDid: didSchema,
+  spaceKey: spaceKeySchema,
+  name: z.string().min(1).max(128),
+  description: z.string().max(512).optional(),
+  spaceType: nsidSchema.optional(),
+  readAccess: spaceReadAccessSchema.default("member"),
+  writeAccess: spaceWriteAccessSchema.default("admin"),
+  collections: z.array(nsidSchema).min(1).max(16),
+});
+
+export const updateSpaceSchema = z
+  .object({
+    adminDid: didSchema,
+    name: z.string().min(1).max(128).optional(),
+    description: z.string().max(512).optional(),
+    readAccess: spaceReadAccessSchema.optional(),
+    writeAccess: spaceWriteAccessSchema.optional(),
+    collections: z.array(nsidSchema).min(1).max(16).optional(),
+  })
+  .refine(
+    (data) =>
+      data.name !== undefined ||
+      data.description !== undefined ||
+      data.readAccess !== undefined ||
+      data.writeAccess !== undefined ||
+      data.collections !== undefined,
+    { message: "At least one field is required" },
+  );
+
+export const deleteSpaceSchema = z.object({
+  adminDid: didSchema,
+});
+
+export const createSpaceInviteSchema = z.object({
+  adminDid: didSchema,
+  inviteeDid: didSchema,
+});
+
+export const revokeSpaceInviteSchema = z.object({
+  adminDid: didSchema,
+});

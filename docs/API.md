@@ -37,6 +37,7 @@ session-authenticated endpoints used by web UIs.
 - [Admins](#admins)
 - [Roles](#roles)
 - [Settings, app visibility & collection permissions](#settings-app-visibility--collection-permissions)
+- [Spaces](#spaces)
 - [Records (generic)](#records-generic)
 - [Announcements (group-only space)](#announcements-group-only-space)
 - [Shared content](#shared-content)
@@ -118,15 +119,15 @@ The [group management methods discussion](https://discourse.atprotocol.community
 proposes a minimal method set apps need to interact with groups, independent
 of how any one service manages them. Here is where Open Social stands on each:
 
-| Proposed method           | Open Social today                                                                                                      | Notes / gaps                                                                                                                                                                                                                |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `listGroups`              | `GET /api/v1/communities?userDid=…` · `GET /xrpc/community.opensocial.searchCommunities`                               | Paginated; optional `userDid` filters to that user's groups.                                                                                                                                                                |
-| `isGroupMember`           | `POST /api/v1/communities/:did/membership/check` · `GET /xrpc/community.opensocial.getPermissions`                     | `getPermissions` also returns roles, satisfying the "optional role field" question.                                                                                                                                         |
-| `joinGroup`               | `POST /api/v1/communities/:did/members/join` · `POST /xrpc/community.opensocial.joinCommunity`                         | Honors community type: `open` joins immediately (writes membership proof); `admin-approved` queues a pending request.                                                                                                       |
-| `leaveGroup`              | `POST /api/v1/communities/:did/members/leave` · `POST /xrpc/community.opensocial.leaveCommunity`                       | Primary admin cannot leave without transferring ownership.                                                                                                                                                                  |
-| `listGroupSpaces`         | **Partial** — `GET /api/v1/communities/:did/permissions` enumerates the collections an app can access and at what role | A collection + its permission rule is the current stand-in for a "space." No first-class space object yet; see [PERMISSIONED_DATA.md](PERMISSIONED_DATA.md).                                                                |
-| `invite` / `revokeInvite` | **Gap**                                                                                                                | Closest primitives: admin approval flow (`members/pending`, `approve`, `reject`) and hierarchy invites between communities. No user-level invite objects for invite-only spaces yet.                                        |
-| `createGroupSpace`        | **Gap** (fixed spaces only)                                                                                            | Spaces are currently predefined collections (announcements, shared content) plus whatever collections an app registers permissions for. A generic "create a space with a policy" method is the permissioned-data end state. |
+| Proposed method           | Open Social today                                                                                  | Notes / gaps                                                                                                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `listGroups`              | `GET /api/v1/communities?userDid=…` · `GET /xrpc/community.opensocial.searchCommunities`           | Paginated; optional `userDid` filters to that user's groups.                                                                                                            |
+| `isGroupMember`           | `POST /api/v1/communities/:did/membership/check` · `GET /xrpc/community.opensocial.getPermissions` | `getPermissions` also returns roles, satisfying the "optional role field" question.                                                                                     |
+| `joinGroup`               | `POST /api/v1/communities/:did/members/join` · `POST /xrpc/community.opensocial.joinCommunity`     | Honors community type: `open` joins immediately (writes membership proof); `admin-approved` queues a pending request.                                                   |
+| `leaveGroup`              | `POST /api/v1/communities/:did/members/leave` · `POST /xrpc/community.opensocial.leaveCommunity`   | Primary admin cannot leave without transferring ownership.                                                                                                              |
+| `listGroupSpaces`         | `GET /api/v1/communities/:did/spaces`                                                              | First-class spaces: each has a key, name, policy (read/write access), and its collections. Pass `userDid` to get per-space `canRead`/`canWrite`. See [Spaces](#spaces). |
+| `invite` / `revokeInvite` | `POST /api/v1/communities/:did/spaces/:spaceKey/invites` · `DELETE …/invites/:inviteeDid`          | User-level invites for invite-only spaces (`readAccess: "invite"`). Community-to-community invites remain in the hierarchy flow.                                        |
+| `createGroupSpace`        | `POST /api/v1/communities/:did/spaces`                                                             | Admins create a space by declaring its collections and read/write policy; the definition is mirrored to the community repo as a `community.opensocial.space` record.    |
 
 On the two open questions in the thread:
 
@@ -242,6 +243,38 @@ community defines its access boundaries.
 Resolution order when an app touches a collection: app visibility
 (explicit status → blocklist → community default) → per-community collection
 rule → app's registered defaults → deny/fallback.
+
+## Spaces
+
+Base: `/api/v1/communities/:did/spaces` — API key; mutations are
+admin-gated. A **space** is a named access boundary around one or more
+collections in the community's repo (permissioned data Phase 1 — see
+[PERMISSIONED_DATA.md](PERMISSIONED_DATA.md)). Every community starts with
+an `announcements` space (read = member, write = admin). Space definitions
+are mirrored into the community repo as `community.opensocial.space`
+records so they are discoverable on-protocol; the database registry is
+authoritative for enforcement.
+
+Space policies are enforced as an **additional gate** on the records and
+announcements endpoints: if a collection belongs to a space, the space's
+read/write policy must also be satisfied. A space can only tighten access,
+never loosen it.
+
+| Method & path                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /`                                 | List spaces (`listGroupSpaces`). Query: optional `userDid` — adds `canRead`/`canWrite` per space.                                                                                                                                                                                                                                                                                                                               |
+| `POST /`                                | Create a space (`createGroupSpace`). Body: `adminDid`, `spaceKey` (lowercase slug), `name` (1–128), optional `description` (≤512), optional `spaceType` (NSID), `readAccess` (`public` \| `member` \| `admin` \| `invite` \| custom role; default `member`), `writeAccess` (`member` \| `admin` \| custom role; default `admin`), `collections` (1–16 NSIDs). A collection can belong to at most one space (`409` on conflict). |
+| `GET /:spaceKey`                        | Space details. Query: optional `userDid` for access flags.                                                                                                                                                                                                                                                                                                                                                                      |
+| `PUT /:spaceKey`                        | Update `name` / `description` / `readAccess` / `writeAccess` / `collections`. Body includes `adminDid`.                                                                                                                                                                                                                                                                                                                         |
+| `DELETE /:spaceKey`                     | Delete the space (and its invites). Body: `adminDid`. Records in the space's collections are not deleted — they just lose the space gate.                                                                                                                                                                                                                                                                                       |
+| `POST /:spaceKey/invites`               | Invite a user to an invite-only space. Body: `adminDid`, `inviteeDid`.                                                                                                                                                                                                                                                                                                                                                          |
+| `GET /:spaceKey/invites`                | List invites. Query: `adminDid`.                                                                                                                                                                                                                                                                                                                                                                                                |
+| `DELETE /:spaceKey/invites/:inviteeDid` | Revoke an invite. Body: `adminDid`.                                                                                                                                                                                                                                                                                                                                                                                             |
+
+Access semantics: admins always read and write; `readAccess: "invite"`
+admits only explicitly invited DIDs (membership is not sufficient);
+custom-role access admits holders of that role. All space mutations are
+audit-logged (`space.*` actions).
 
 ## Records (generic)
 
@@ -378,13 +411,14 @@ surface, with request/response shapes validated against the lexicon files in
 Record types written by this service (all in the community's repo unless
 noted):
 
-| Lexicon                                                                          | Key    | Purpose                                                                                                |
-| -------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------ |
-| `community.opensocial.profile`                                                   | `self` | Display name, description, avatar/banner, type (`open`/`admin-approved`/`private`), guidelines, links. |
-| `community.opensocial.admins`                                                    | `self` | Ordered admin DIDs; index 0 is the primary admin.                                                      |
-| `community.opensocial.membership`                                                | tid    | Written to the **user's** repo when they join.                                                         |
-| `community.opensocial.membershipProof`                                           | tid    | Community-side confirmation (`memberDid`, `cid` of the user's membership record).                      |
-| `community.opensocial.announcement`                                              | tid    | Group-only announcement (`title`, `text`, `createdBy`, `createdAt`, optional `updatedAt`, `pinned`).   |
-| `community.opensocial.sharedDocument` / `sharedEvent` / `sharedContent` (legacy) | tid    | Content shared into the community.                                                                     |
-| `community.opensocial.hierarchy`                                                 | tid    | Parent/child relationship records.                                                                     |
-| `community.opensocial.authBasic`                                                 | —      | Permission set granting apps write access to the user's `membership` collection.                       |
+| Lexicon                                                                          | Key       | Purpose                                                                                                |
+| -------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| `community.opensocial.profile`                                                   | `self`    | Display name, description, avatar/banner, type (`open`/`admin-approved`/`private`), guidelines, links. |
+| `community.opensocial.admins`                                                    | `self`    | Ordered admin DIDs; index 0 is the primary admin.                                                      |
+| `community.opensocial.membership`                                                | tid       | Written to the **user's** repo when they join.                                                         |
+| `community.opensocial.membershipProof`                                           | tid       | Community-side confirmation (`memberDid`, `cid` of the user's membership record).                      |
+| `community.opensocial.announcement`                                              | tid       | Group-only announcement (`title`, `text`, `createdBy`, `createdAt`, optional `updatedAt`, `pinned`).   |
+| `community.opensocial.sharedDocument` / `sharedEvent` / `sharedContent` (legacy) | tid       | Content shared into the community.                                                                     |
+| `community.opensocial.space`                                                     | space key | Space definition: name, read/write access policy, member collections.                                  |
+| `community.opensocial.hierarchy`                                                 | tid       | Parent/child relationship records.                                                                     |
+| `community.opensocial.authBasic`                                                 | —         | Permission set granting apps write access to the user's `membership` collection.                       |
