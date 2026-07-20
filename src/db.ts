@@ -1,6 +1,7 @@
 import { Generated, Kysely, PostgresDialect, sql } from 'kysely';
 import { Pool } from 'pg';
 import type { AuthState, AuthSession } from './models/auth';
+import { config } from './config';
 
 export interface Community {
   did: string;
@@ -253,6 +254,9 @@ export function createDb(connectionString: string): Kysely<Database> {
     dialect: new PostgresDialect({
       pool: new Pool({
         connectionString,
+        max: config.pgPoolMax,
+        idleTimeoutMillis: config.pgIdleTimeoutMs,
+        connectionTimeoutMillis: config.pgConnectionTimeoutMs,
       }),
     }),
   });
