@@ -24,6 +24,9 @@ export interface App {
   domain: string;
   creator_did: string;
   api_key: string;
+  /** SHA-256 hex of the raw API key for indexed lookup. Null for apps created
+   *  before migration 016 (backfilled lazily on successful legacy auth). */
+  api_key_lookup: string | null;
   auth_method: 'api_key' | 'http_signature' | 'both';
   cimd_url: string | null;
   created_at: Generated<Date>;
