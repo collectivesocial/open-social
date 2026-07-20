@@ -33,33 +33,7 @@ import {
   auditLogRateLimiter,
 } from "../middleware/rateLimit";
 import { logWarning } from "../lib/errors";
-
-/**
- * Resolve a Bluesky profile to get handle, display name, and avatar.
- * Falls back gracefully if the user's PDS is unreachable.
- */
-async function resolveProfile(
-  did: string,
-): Promise<{
-  handle: string | null;
-  displayName: string | null;
-  avatar: string | null;
-}> {
-  try {
-    const res = await fetch(
-      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`,
-    );
-    if (res.ok) {
-      const data = (await res.json()) as any;
-      return {
-        handle: data.handle || null,
-        displayName: data.displayName || null,
-        avatar: data.avatar || null,
-      };
-    }
-  } catch {}
-  return { handle: null, displayName: null, avatar: null };
-}
+import { resolveProfiles } from "../lib/profiles";
 
 /**
  * Check community type from its profile record.
@@ -479,52 +453,77 @@ export function createMemberRouter(db: Kysely<Database>): Router {
           allProofs.length >= maxFetch || offset + limit < members.length;
         const total = members.length; // This is partial count when limited
 
-        // Resolve Bluesky profiles for this page, and include visible roles
-        const enriched = await Promise.all(
-          page.map(async (member) => {
-            if (!member.did)
-              return {
-                ...member,
-                handle: null,
-                displayName: null,
-                avatar: null,
-                roles: [],
-              };
-            const profile = await resolveProfile(member.did);
+        // Resolve Bluesky profiles and visible roles for this page in bulk:
+        // one batched profile pass and a single roles query instead of one
+        // fetch + one query per member.
+        const pageDids = page
+          .map((member) => member.did)
+          .filter((did): did is string => Boolean(did));
 
-            // Fetch visible custom roles from the database
-            const visibleRoleRows = await db
-              .selectFrom("community_member_roles")
-              .innerJoin("community_roles", (join) =>
-                join
-                  .onRef(
-                    "community_member_roles.community_did",
-                    "=",
-                    "community_roles.community_did",
-                  )
-                  .onRef(
-                    "community_member_roles.role_name",
-                    "=",
-                    "community_roles.name",
-                  ),
-              )
-              .select([
-                "community_member_roles.role_name",
-                "community_roles.display_name",
-              ])
-              .where("community_member_roles.community_did", "=", communityDid)
-              .where("community_member_roles.member_did", "=", member.did)
-              .where("community_roles.visible", "=", true)
-              .execute();
+        const [profiles, visibleRoleRows] = await Promise.all([
+          resolveProfiles(pageDids),
+          pageDids.length > 0
+            ? db
+                .selectFrom("community_member_roles")
+                .innerJoin("community_roles", (join) =>
+                  join
+                    .onRef(
+                      "community_member_roles.community_did",
+                      "=",
+                      "community_roles.community_did",
+                    )
+                    .onRef(
+                      "community_member_roles.role_name",
+                      "=",
+                      "community_roles.name",
+                    ),
+                )
+                .select([
+                  "community_member_roles.member_did",
+                  "community_member_roles.role_name",
+                  "community_roles.display_name",
+                ])
+                .where(
+                  "community_member_roles.community_did",
+                  "=",
+                  communityDid,
+                )
+                .where("community_member_roles.member_did", "in", pageDids)
+                .where("community_roles.visible", "=", true)
+                .execute()
+            : Promise.resolve([]),
+        ]);
 
-            const roles = visibleRoleRows.map((r) => ({
-              name: r.role_name,
-              displayName: r.display_name,
-            }));
+        const rolesByDid = new Map<
+          string,
+          Array<{ name: string; displayName: string }>
+        >();
+        for (const row of visibleRoleRows) {
+          const roles = rolesByDid.get(row.member_did) ?? [];
+          roles.push({ name: row.role_name, displayName: row.display_name });
+          rolesByDid.set(row.member_did, roles);
+        }
 
-            return { ...member, ...profile, roles };
-          }),
-        );
+        const enriched = page.map((member) => {
+          if (!member.did)
+            return {
+              ...member,
+              handle: null,
+              displayName: null,
+              avatar: null,
+              roles: [],
+            };
+          const profile = profiles.get(member.did) ?? {
+            handle: null,
+            displayName: null,
+            avatar: null,
+          };
+          return {
+            ...member,
+            ...profile,
+            roles: rolesByDid.get(member.did) ?? [],
+          };
+        });
 
         res.json({
           members: enriched,
@@ -586,18 +585,17 @@ export function createMemberRouter(db: Kysely<Database>): Router {
           .orderBy("created_at", "asc")
           .execute();
 
-        // Resolve profiles
-        const enriched = await Promise.all(
-          pending.map(async (p) => {
-            const profile = await resolveProfile(p.user_did);
-            return {
-              userDid: p.user_did,
-              handle: profile.handle,
-              avatar: profile.avatar,
-              requestedAt: p.created_at,
-            };
-          }),
-        );
+        // Resolve profiles in batches instead of one fetch per pending member
+        const profiles = await resolveProfiles(pending.map((p) => p.user_did));
+        const enriched = pending.map((p) => {
+          const profile = profiles.get(p.user_did);
+          return {
+            userDid: p.user_did,
+            handle: profile?.handle ?? null,
+            avatar: profile?.avatar ?? null,
+            requestedAt: p.created_at,
+          };
+        });
 
         res.json({ pendingMembers: enriched, total: enriched.length });
       } catch (error) {
@@ -1075,11 +1073,9 @@ export function createMemberRouter(db: Kysely<Database>): Router {
 
         const originalAdmin = getOriginalAdminDid(admins);
         if (memberDid === originalAdmin) {
-          return res
-            .status(403)
-            .json({
-              error: "Cannot demote the primary admin. Use transfer instead.",
-            });
+          return res.status(403).json({
+            error: "Cannot demote the primary admin. Use transfer instead.",
+          });
         }
 
         if (!isAdminInList(memberDid, admins)) {
@@ -1162,11 +1158,9 @@ export function createMemberRouter(db: Kysely<Database>): Router {
 
         // Verify the new owner is already an admin
         if (!isAdminInList(newOwnerDid, admins)) {
-          return res
-            .status(400)
-            .json({
-              error: "New owner must already be an admin. Promote them first.",
-            });
+          return res.status(400).json({
+            error: "New owner must already be an admin. Promote them first.",
+          });
         }
 
         // Reorder: new owner goes first (becomes primary), current owner stays as regular admin
