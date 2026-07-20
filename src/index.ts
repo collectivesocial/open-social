@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import http from "http";
@@ -49,6 +50,10 @@ const PORT = config.port;
 // Trust the reverse proxy (Azure Container Apps / Envoy) so that
 // req.protocol reflects the original scheme (https) and secure cookies work.
 app.set("trust proxy", 1);
+
+// Compress JSON/HTML responses (member lists, community search, audit logs
+// can be sizable). WebSocket upgrades bypass Express middleware entirely.
+app.use(compression());
 
 // Middleware
 const allowedOrigins =
