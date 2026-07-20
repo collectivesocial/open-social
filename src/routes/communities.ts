@@ -19,6 +19,7 @@ import { createWebhookService } from "../services/webhook";
 import { createCommunityAgent } from "../services/atproto";
 import {
   checkAppVisibility,
+  checkMembership,
   seedCollectionPermissions,
 } from "../services/permissions";
 import { config } from "../config";
@@ -123,12 +124,10 @@ export function createCommunityRouter(db: Kysely<Database>): Router {
       try {
         await bskyAgent.login({ identifier: did, password: appPassword });
       } catch (e) {
-        return res
-          .status(400)
-          .json({
-            error:
-              "Invalid DID or app password. Could not authenticate with the provided credentials.",
-          });
+        return res.status(400).json({
+          error:
+            "Invalid DID or app password. Could not authenticate with the provided credentials.",
+        });
       }
 
       // Store in database
@@ -652,21 +651,12 @@ export function createCommunityRouter(db: Kysely<Database>): Router {
           try {
             const agent = await createCommunityAgent(db, communityDid);
 
-            // Membership
-            let isMember = false;
-            let cursor: string | undefined;
-            do {
-              const membersRes = await agent.api.com.atproto.repo.listRecords({
-                repo: communityDid,
-                collection: "community.opensocial.membershipProof",
-                limit: 100,
-                cursor,
-              });
-              isMember = membersRes.data.records.some(
-                (r: any) => r.value.memberDid === userDid,
-              );
-              cursor = membersRes.data.cursor;
-            } while (cursor && !isMember);
+            // Membership (cached, 5-min TTL)
+            const isMember = await checkMembership(
+              agent,
+              communityDid,
+              userDid,
+            );
 
             if (isMember) userRoles.push("member");
 
@@ -760,12 +750,10 @@ export function createCommunityRouter(db: Kysely<Database>): Router {
           }
 
           if (normalizeAdmins(admins).length > 1) {
-            return res
-              .status(400)
-              .json({
-                error:
-                  "Community must have only one admin to be deleted. Remove other admins first.",
-              });
+            return res.status(400).json({
+              error:
+                "Community must have only one admin to be deleted. Remove other admins first.",
+            });
           }
         } catch (e) {
           logger.error(

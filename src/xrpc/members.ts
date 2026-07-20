@@ -14,13 +14,13 @@ import {
 import { encodeCursor, decodeCursor } from "../lib/pagination";
 import { logger } from "../lib/logger";
 import { logWarning } from "../lib/errors";
+import { memberCache } from "../lib/cache";
+import { checkMembership, findMembershipProof } from "../services/permissions";
 
 /**
  * Resolve a Bluesky profile to get handle, display name, and avatar.
  */
-async function resolveProfile(
-  did: string,
-): Promise<{
+async function resolveProfile(did: string): Promise<{
   handle: string | null;
   displayName: string | null;
   avatar: string | null;
@@ -87,21 +87,12 @@ export function registerMemberHandlers(
 
       const communityAgent = await createCommunityAgent(db, communityDid);
 
-      // Check if already a member
-      let cursor: string | undefined;
-      let alreadyMember = false;
-      do {
-        const response = await communityAgent.api.com.atproto.repo.listRecords({
-          repo: communityDid,
-          collection: "community.opensocial.membershipProof",
-          limit: 100,
-          cursor,
-        });
-        alreadyMember = response.data.records.some(
-          (r: any) => r.value.memberDid === userDid,
-        );
-        cursor = response.data.cursor;
-      } while (cursor && !alreadyMember);
+      // Check if already a member (cached, 5-min TTL)
+      const alreadyMember = await checkMembership(
+        communityAgent,
+        communityDid,
+        userDid,
+      );
 
       if (alreadyMember) {
         throw new XrpcError(
@@ -160,6 +151,7 @@ export function registerMemberHandlers(
           confirmedAt: new Date().toISOString(),
         },
       });
+      memberCache.set(`${communityDid}:${userDid}`, true);
 
       await auditLog.log({
         communityDid,
@@ -249,31 +241,22 @@ export function registerMemberHandlers(
       }
 
       // Find and delete the membershipProof
-      let memberCursor: string | undefined;
-      let proofRecord: any = null;
-      do {
-        const response = await communityAgent.api.com.atproto.repo.listRecords({
-          repo: communityDid,
-          collection: "community.opensocial.membershipProof",
-          limit: 100,
-          cursor: memberCursor,
-        });
-        proofRecord = response.data.records.find(
-          (r: any) => r.value.memberDid === userDid,
-        );
-        memberCursor = response.data.cursor;
-      } while (memberCursor && !proofRecord);
+      const proof = await findMembershipProof(
+        communityAgent,
+        communityDid,
+        userDid,
+      );
 
-      if (!proofRecord) {
+      if (!proof) {
         throw new XrpcError(404, "NotMember", "Not a member of this community");
       }
 
-      const rkey = proofRecord.uri.split("/").pop()!;
       await communityAgent.api.com.atproto.repo.deleteRecord({
         repo: communityDid,
         collection: "community.opensocial.membershipProof",
-        rkey,
+        rkey: proof.rkey,
       });
+      memberCache.set(`${communityDid}:${userDid}`, false);
 
       await webhooks.dispatch("member.left", communityDid, {
         communityDid,
@@ -429,6 +412,7 @@ export function registerMemberHandlers(
           confirmedAt: new Date().toISOString(),
         },
       });
+      memberCache.set(`${communityDid}:${userDid}`, true);
 
       await db
         .updateTable("pending_members")
@@ -582,22 +566,13 @@ export function registerMemberHandlers(
       }
 
       // Find membershipProof
-      let memberCursor: string | undefined;
-      let proofRecord: any = null;
-      do {
-        const response = await communityAgent.api.com.atproto.repo.listRecords({
-          repo: communityDid,
-          collection: "community.opensocial.membershipProof",
-          limit: 100,
-          cursor: memberCursor,
-        });
-        proofRecord = response.data.records.find(
-          (r: any) => r.value.memberDid === memberDid,
-        );
-        memberCursor = response.data.cursor;
-      } while (memberCursor && !proofRecord);
+      const proof = await findMembershipProof(
+        communityAgent,
+        communityDid,
+        memberDid,
+      );
 
-      if (!proofRecord) {
+      if (!proof) {
         throw new XrpcError(
           404,
           "MemberNotFound",
@@ -605,12 +580,12 @@ export function registerMemberHandlers(
         );
       }
 
-      const rkey = proofRecord.uri.split("/").pop()!;
       await communityAgent.api.com.atproto.repo.deleteRecord({
         repo: communityDid,
         collection: "community.opensocial.membershipProof",
-        rkey,
+        rkey: proof.rkey,
       });
+      memberCache.set(`${communityDid}:${memberDid}`, false);
 
       // Remove from admin list if they were an admin
       if (isAdminInList(memberDid, admins)) {

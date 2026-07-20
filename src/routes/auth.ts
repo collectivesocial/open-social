@@ -30,7 +30,7 @@ import {
 import { authRateLimiter } from "../middleware/rateLimit";
 import { checkAdmin, seedCollectionPermissions } from "../services/permissions";
 import { createAuditLogService } from "../services/auditLog";
-import { memberRolesCache } from "../lib/cache";
+import { memberCache, memberRolesCache } from "../lib/cache";
 import { logger } from "../lib/logger";
 import { sanitizeUserContent } from "../lib/sanitize";
 
@@ -840,6 +840,7 @@ export function createAuthRouter(
             confirmedAt: new Date().toISOString(),
           },
         });
+        memberCache.set(`${communityDid}:${agent.assertDid}`, true);
 
         // Enable the system app for this community and seed default permissions
         try {
@@ -1410,6 +1411,7 @@ export function createAuthRouter(
           confirmedAt: new Date().toISOString(),
         },
       });
+      memberCache.set(`${communityDid}:${agent.assertDid}`, true);
 
       await auditLog.log({
         communityDid,
@@ -1546,6 +1548,7 @@ export function createAuthRouter(
               collection: "community.opensocial.membershipProof",
               rkey,
             });
+            memberCache.set(`${communityDid}:${agent.assertDid}`, false);
           } catch (err) {
             logger.error(
               { error: err, communityDid, userDid: agent.assertDid },

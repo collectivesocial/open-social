@@ -34,6 +34,8 @@ import {
 } from "../middleware/rateLimit";
 import { logWarning } from "../lib/errors";
 import { resolveProfiles } from "../lib/profiles";
+import { memberCache } from "../lib/cache";
+import { checkMembership, findMembershipProof } from "../services/permissions";
 
 /**
  * Check community type from its profile record.
@@ -92,22 +94,12 @@ export function createMemberRouter(db: Kysely<Database>): Router {
 
         const communityAgent = await createCommunityAgent(db, communityDid);
 
-        // Check if already a member
-        let cursor: string | undefined;
-        let alreadyMember = false;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor,
-            });
-          alreadyMember = response.data.records.some(
-            (r: any) => r.value.memberDid === userDid,
-          );
-          cursor = response.data.cursor;
-        } while (cursor && !alreadyMember);
+        // Check if already a member (cached, 5-min TTL)
+        const alreadyMember = await checkMembership(
+          communityAgent,
+          communityDid,
+          userDid,
+        );
 
         if (alreadyMember) {
           return res
@@ -163,6 +155,7 @@ export function createMemberRouter(db: Kysely<Database>): Router {
             confirmedAt: new Date().toISOString(),
           },
         });
+        memberCache.set(`${communityDid}:${userDid}`, true);
 
         await auditLog.log({
           communityDid,
@@ -263,34 +256,24 @@ export function createMemberRouter(db: Kysely<Database>): Router {
         }
 
         // Find and delete the membershipProof
-        let memberCursor: string | undefined;
-        let proofRecord: any = null;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor: memberCursor,
-            });
-          proofRecord = response.data.records.find(
-            (r: any) => r.value.memberDid === userDid,
-          );
-          memberCursor = response.data.cursor;
-        } while (memberCursor && !proofRecord);
+        const proof = await findMembershipProof(
+          communityAgent,
+          communityDid,
+          userDid,
+        );
 
-        if (!proofRecord) {
+        if (!proof) {
           return res
             .status(404)
             .json({ error: "Not a member of this community" });
         }
 
-        const rkey = proofRecord.uri.split("/").pop()!;
         await communityAgent.api.com.atproto.repo.deleteRecord({
           repo: communityDid,
           collection: "community.opensocial.membershipProof",
-          rkey,
+          rkey: proof.rkey,
         });
+        memberCache.set(`${communityDid}:${userDid}`, false);
 
         await webhooks.dispatch("member.left", communityDid, {
           communityDid,
@@ -673,6 +656,7 @@ export function createMemberRouter(db: Kysely<Database>): Router {
             confirmedAt: new Date().toISOString(),
           },
         });
+        memberCache.set(`${communityDid}:${memberDid}`, true);
 
         // Update pending status
         await db
@@ -855,35 +839,25 @@ export function createMemberRouter(db: Kysely<Database>): Router {
         }
 
         // Find membershipProof
-        let memberCursor: string | undefined;
-        let proofRecord: any = null;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor: memberCursor,
-            });
-          proofRecord = response.data.records.find(
-            (r: any) => r.value.memberDid === memberDid,
-          );
-          memberCursor = response.data.cursor;
-        } while (memberCursor && !proofRecord);
+        const proof = await findMembershipProof(
+          communityAgent,
+          communityDid,
+          memberDid,
+        );
 
-        if (!proofRecord) {
+        if (!proof) {
           return res
             .status(404)
             .json({ error: "Member not found in this community" });
         }
 
         // Delete membershipProof
-        const rkey = proofRecord.uri.split("/").pop()!;
         await communityAgent.api.com.atproto.repo.deleteRecord({
           repo: communityDid,
           collection: "community.opensocial.membershipProof",
-          rkey,
+          rkey: proof.rkey,
         });
+        memberCache.set(`${communityDid}:${memberDid}`, false);
 
         // Remove from admin list if they were an admin
         if (isAdminInList(memberDid, admins)) {
@@ -974,22 +948,12 @@ export function createMemberRouter(db: Kysely<Database>): Router {
           return res.status(409).json({ error: "Member is already an admin" });
         }
 
-        // Verify the member exists
-        let memberCursor: string | undefined;
-        let found = false;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor: memberCursor,
-            });
-          found = response.data.records.some(
-            (r: any) => r.value.memberDid === memberDid,
-          );
-          memberCursor = response.data.cursor;
-        } while (memberCursor && !found);
+        // Verify the member exists (cached, 5-min TTL)
+        const found = await checkMembership(
+          communityAgent,
+          communityDid,
+          memberDid,
+        );
 
         if (!found) {
           return res
@@ -1232,22 +1196,13 @@ export function createMemberRouter(db: Kysely<Database>): Router {
 
         const communityAgent = await createCommunityAgent(db, communityDid);
 
-        // Check membership
-        let memberCursor: string | undefined;
-        let isMember = false;
-        do {
-          const response =
-            await communityAgent.api.com.atproto.repo.listRecords({
-              repo: communityDid,
-              collection: "community.opensocial.membershipProof",
-              limit: 100,
-              cursor: memberCursor,
-            });
-          isMember = response.data.records.some(
-            (r: any) => r.value.memberDid === userDid,
-          );
-          memberCursor = response.data.cursor;
-        } while (memberCursor && !isMember);
+        // Check membership (cached, 5-min TTL; joins/leaves through this API
+        // update the cache immediately)
+        const isMember = await checkMembership(
+          communityAgent,
+          communityDid,
+          userDid,
+        );
 
         // Check admin status
         let isAdmin = false;
