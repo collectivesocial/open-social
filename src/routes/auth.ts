@@ -128,6 +128,7 @@ async function resolveBlueskyProfile(did: string): Promise<{
   try {
     const res = await fetch(
       `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`,
+      { signal: AbortSignal.timeout(3000) },
     );
     if (res.ok) {
       const data = (await res.json()) as any;
@@ -580,7 +581,9 @@ export function createAuthRouter(
       listUrl.searchParams.set("limit", String(limit));
       if (cursor) listUrl.searchParams.set("cursor", cursor);
 
-      const listRes = await fetch(listUrl.toString());
+      const listRes = await fetch(listUrl.toString(), {
+        signal: AbortSignal.timeout(5000),
+      });
       if (!listRes.ok) {
         // User may not have any documents — return empty
         return res.json({ publications: [], cursor: undefined });
@@ -633,7 +636,9 @@ export function createAuthRouter(
       listUrl.searchParams.set("limit", String(limit));
       if (cursor) listUrl.searchParams.set("cursor", cursor);
 
-      const listRes = await fetch(listUrl.toString());
+      const listRes = await fetch(listUrl.toString(), {
+        signal: AbortSignal.timeout(5000),
+      });
       if (!listRes.ok) {
         return res.json({ events: [], cursor: undefined });
       }
@@ -1767,7 +1772,9 @@ export function createAuthRouter(
             }
             // Fetch the banner blob and re-upload to community PDS
             const bannerUrl = bskyProfile.data.banner;
-            const bannerRes = await fetch(bannerUrl);
+            const bannerRes = await fetch(bannerUrl, {
+              signal: AbortSignal.timeout(10000),
+            });
             if (!bannerRes.ok) {
               return res
                 .status(500)

@@ -1,4 +1,3 @@
-import { BskyAgent } from "@atproto/api";
 import { logger } from "./logger";
 
 /**
@@ -58,11 +57,13 @@ export async function fetchBlueskyAvatar(
   did: string,
 ): Promise<string | undefined> {
   try {
-    const publicAgent = new BskyAgent({
-      service: "https://public.api.bsky.app",
-    });
-    const profile = await publicAgent.getProfile({ actor: did });
-    return profile.data.avatar || undefined;
+    const res = await fetch(
+      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+    if (!res.ok) return undefined;
+    const profile = (await res.json()) as { avatar?: string };
+    return profile.avatar || undefined;
   } catch (err) {
     logger.warn({ error: err, did }, "Could not fetch Bluesky avatar");
     return undefined;
