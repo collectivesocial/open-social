@@ -7,7 +7,8 @@ import crypto from "crypto";
 import { config } from "../config";
 import type { Kysely } from "kysely";
 import type { Database } from "../db";
-import { hashApiKey, verifyApiKey } from "../lib/crypto";
+import { computeApiKeyLookup, hashApiKey } from "../lib/crypto";
+import { authenticateApiKey } from "../middleware/auth";
 import {
   getCimdDocument,
   jwkToKeyObject,
@@ -162,6 +163,7 @@ export function createAppRouter(
           domain,
           creator_did: creatorDid,
           api_key: apiKeyHash,
+          api_key_lookup: needsApiKey ? computeApiKeyLookup(apiKey!) : null,
           auth_method: effectiveAuthMethod,
           cimd_url: cimdUrl || null,
           created_at: new Date(),
@@ -518,6 +520,7 @@ export function createAppRouter(
         .updateTable("apps")
         .set({
           api_key: hashApiKey(newApiKey),
+          api_key_lookup: computeApiKeyLookup(newApiKey),
           updated_at: new Date(),
         })
         .where("app_id", "=", req.params.appId)
@@ -549,17 +552,8 @@ export function createAppRouter(
       }
 
       if (apiKey) {
-        // API key verification path
-        const apps = await db
-          .selectFrom("apps")
-          .selectAll()
-          .where("status", "=", "active")
-          .where("api_key", "is not", null)
-          .execute();
-
-        const app = apps.find((candidate) =>
-          verifyApiKey(apiKey, candidate.api_key),
-        );
+        // API key verification path — same indexed lookup as the middleware
+        const app = await authenticateApiKey(db, apiKey);
 
         if (!app) {
           return res.status(401).json({ error: "Invalid API key" });

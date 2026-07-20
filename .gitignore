@@ -6,4 +6,4 @@ dist-migrations/
 .DS_Store
 db-backups/
 .vscode/
-coverage/
+coverage/src/**/*.js
